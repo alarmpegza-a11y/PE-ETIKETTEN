@@ -334,7 +334,7 @@ body.modus-scan{background:var(--beton)}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 window.__peStart=true;
 
 /* ---------- Firebase ---------- */
@@ -448,9 +448,11 @@ const bereit={objekte:false,plaene:false,elemente:false,settings:false};
 const vomServer={objekte:false,settings:false};
 const meta={};
 let seedGeprueft=false;
+let zugriffFehler=false, authFehler=null, angemeldet=false;
 function syncStatus(){
   const m=Object.values(meta);
   let cls='live', txt='Live verbunden';
+  if(zugriffFehler){ $$('.sync').forEach(el=>{ el.className='sync offline'; el.textContent='Kein Zugriff'; }); return; }
   if(!navigator.onLine||m.some(x=>x.fromCache)){ cls='offline'; txt='Offline, wird später synchronisiert'; }
   else if(m.some(x=>x.hasPendingWrites)){ cls='pending'; txt='Wird gespeichert'; }
   $$('.sync').forEach(el=>{ el.className='sync '+cls; el.textContent=txt; });
@@ -458,28 +460,37 @@ function syncStatus(){
 function syncFehler(err){
   console.error(err);
   const b=$('#banner'); b.hidden=false;
-  b.textContent=err&&err.code==='permission-denied'
-    ?'Kein Zugriff auf die Datenbank. Bitte die Firestore-Regeln in der Firebase-Konsole prüfen.'
-    :'Verbindung zur Datenbank fehlgeschlagen: '+(err&&(err.code||err.message));
+  if(err&&err.code==='permission-denied'){
+    zugriffFehler=true;
+    b.textContent=authFehler
+      ?`Kein Zugriff: Die anonyme Anmeldung ist fehlgeschlagen (${authFehler}). In der Firebase-Konsole unter Authentication → Anmeldemethode "Anonym" aktivieren und die Domain unter Einstellungen → Autorisierte Domains eintragen.`
+      :(angemeldet?'Kein Zugriff trotz Anmeldung. Bitte die Firestore-Regeln in der Firebase-Konsole prüfen.'
+                  :'Kein Zugriff: Anmeldung noch nicht abgeschlossen. Seite neu laden.');
+  }else b.textContent='Verbindung zur Datenbank fehlgeschlagen: '+(err&&(err.code||err.message));
+  syncStatus();
 }
+function fehlerZurueck(){ zugriffFehler=false; const b=$('#banner'); b.hidden=true; b.textContent=''; }
+let abmelden=[];
 function starteListener(){
+  abmelden.forEach(u=>{ try{ u(); }catch(e){} }); abmelden=[];
   for(const name of ['objekte','plaene','elemente']){
-    onSnapshot(collection(fs,name),{includeMetadataChanges:true},snap=>{
+    abmelden.push(onSnapshot(collection(fs,name),{includeMetadataChanges:true},snap=>{
+      if(zugriffFehler) fehlerZurueck();
       meta[name]=snap.metadata; syncStatus();
       const geaendert=snap.docChanges().length>0;
       if(geaendert||!bereit[name]) S[name]=snap.docs.map(d=>({...d.data(),id:d.id}));
       if(name==='objekte'&&!snap.metadata.fromCache){ vomServer.objekte=true; pruefeSeed(); }
       if(!bereit[name]){ bereit[name]=true; pruefeStart(); }
       else if(geaendert) planRender();
-    },syncFehler);
+    },syncFehler));
   }
-  onSnapshot(ref('settings','app'),{includeMetadataChanges:true},snap=>{
+  abmelden.push(onSnapshot(ref('settings','app'),{includeMetadataChanges:true},snap=>{
     meta.settings=snap.metadata; syncStatus();
     S.settings=snap.exists()?snap.data():{};
     if(!snap.metadata.fromCache){ vomServer.settings=true; pruefeSeed(); }
     qrCache.clear(); applyLogo();
     if(!bereit.settings){ bereit.settings=true; pruefeStart(); } else planRender();
-  },syncFehler);
+  },syncFehler));
 }
 function pruefeSeed(){
   if(seedGeprueft||!vomServer.objekte||!vomServer.settings) return;
@@ -1202,10 +1213,17 @@ function seed(){
 async function init(){
   route();
   await DB.open();
-  try{
-    await Promise.race([signInAnonymously(getAuth(fbApp)),new Promise((_,rej)=>setTimeout(()=>rej(new Error('Zeitüberschreitung')),5000))]);
-  }catch(err){ console.info('Anonyme Anmeldung nicht aktiv, weiter ohne Anmeldung:',err.code||err.message); }
-  starteListener();
+  const auth=getAuth(fbApp);
+  let gestartet=false;
+  const los=()=>{ if(!gestartet){ gestartet=true; starteListener(); } };
+  onAuthStateChanged(auth,user=>{
+    angemeldet=!!user;
+    if(user){ authFehler=null; if(gestartet&&zugriffFehler){ fehlerZurueck(); starteListener(); } else los(); }
+  });
+  signInAnonymously(auth).catch(err=>{
+    authFehler=err.code||err.message; console.warn('Anonyme Anmeldung fehlgeschlagen:',authFehler); los();
+  });
+  setTimeout(los,20000);
 }
 init().catch(err=>{ console.error(err); syncFehler(err); });
 </script>
