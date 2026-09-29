@@ -205,6 +205,21 @@ dialog::backdrop{background:rgba(18,30,45,.45)}
 .tb-rechts{align-items:center}
 .sc-kopf{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .sc-kopf .sync{padding:0}
+/* PDF-Ansicht */
+.viewer{position:fixed;inset:0;z-index:60;background:#2B3138;display:flex;flex-direction:column}
+.viewer[hidden]{display:none}
+body.vw-offen{overflow:hidden}
+.vw-kopf{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;justify-content:space-between;background:#fff;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top,0px))}
+.vw-kopf strong{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 160px}
+.vw-akt{display:flex;gap:6px;flex:none}
+.vw-akt .btn{min-width:40px;min-height:38px}
+.vw-inhalt{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:12px 8px calc(24px + env(safe-area-inset-bottom,0px))}
+.vw-seite{display:block;margin:0 auto 12px;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.vw-info{color:#fff;text-align:center;padding:40px 20px;margin:0}
+.plan-tag.kaputt{background:#FBE9E8;color:var(--rot);border:1.5px solid var(--rot)}
+.sc-h3{font-size:15px;font-weight:700;margin:18px 0 10px;color:var(--stahl)}
+.pk.klein{padding:10px 12px}
+.pk.klein .pk-text strong{font-size:15px}
 /* Toast */
 #toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--tinte);color:#fff;padding:10px 16px;border-radius:8px;font-weight:600;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:50;max-width:calc(100vw - 32px)}
 #toast.an{opacity:1;transform:translate(-50%,0)}
@@ -318,6 +333,12 @@ body.modus-scan{background:var(--beton)}
 <div id="scan"></div>
 <div id="print-area"></div>
 <dialog id="dlg"></dialog>
+<div id="viewer" class="viewer" hidden role="dialog" aria-modal="true" aria-label="Plan ansehen">
+  <header class="vw-kopf"><strong id="vwTitel"></strong>
+    <div class="vw-akt"><button class="btn sm" data-vw="minus" aria-label="Verkleinern">−</button><button class="btn sm" data-vw="plus" aria-label="Vergrössern">+</button><a class="btn sm" id="vwDl">Herunterladen</a><button class="btn sm primary" data-vw="zu">Schliessen</button></div>
+  </header>
+  <div class="vw-inhalt" id="vwInhalt"></div>
+</div>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <datalist id="gewerke">
@@ -622,11 +643,16 @@ function planSpalte(art,titel,liste){
       const info=[p.fileId?kb(p.size||0):'nur Online-Link', p.url&&p.fileId?'mit Online-Link':'', n?`${n} Element${n>1?'e':''}`:'nicht zugewiesen'].filter(Boolean).join(', ');
       return `<li><span class="pdf-ico" aria-hidden="true">PDF</span>
         <span class="plan-name" title="${h(p.name)}">${h(p.name)}<small>${h(info)}</small></span>
-        <span class="plan-akt"><button class="btn sm ghost" data-plan-dl="${p.id}">Herunterladen</button><button class="btn sm ghost" data-plan-edit="${p.id}">Link</button><button class="btn sm ghost danger" data-plan-del="${p.id}">Entfernen</button></span></li>`;
+        <span class="plan-akt"><button class="btn sm ghost" data-pdf="${p.id}">Ansehen</button><button class="btn sm ghost" data-plan-dl="${p.id}">Herunterladen</button><button class="btn sm ghost" data-plan-edit="${p.id}">Link</button><button class="btn sm ghost danger" data-plan-del="${p.id}">Entfernen</button></span></li>`;
     }).join('')}</ul>`:`<p class="leer">Noch keine ${titel} hochgeladen.</p>`}
   </div>`;
 }
 
+function planTag(k,titel,id,p){
+  if(p) return `<span class="plan-tag ok" title="${titel}: ${h(p.name)}">${k}</span>`;
+  if(id) return `<span class="plan-tag kaputt" title="${titel} fehlt in der Datenbank, bitte neu hochladen">${k}</span>`;
+  return `<span class="plan-tag fehlt" title="Kein ${titel} zugewiesen">${k}</span>`;
+}
 function tabelle(els){
   const alle=els.length&&els.every(e=>S.auswahl.has(e.id));
   return `<div class="tab-wrap"><table class="el-tab">
@@ -639,7 +665,7 @@ function tabelle(els){
         <td class="c-pos">${h(e.pos)}</td>
         <td>${h(e.bezeichnung)}${e.geschoss?`<small>${h(e.geschoss)}</small>`:''}</td>
         <td>${h(e.gewerk)}</td>
-        <td class="c-plaene"><span class="plan-tag ${mp?'ok':'fehlt'}" title="${mp?'Montageplan: '+h(mp.name):'Kein Montageplan zugewiesen'}">M</span><span class="plan-tag ${dp?'ok':'fehlt'}" title="${dp?'Detailplan: '+h(dp.name):'Kein Detailplan zugewiesen'}">D</span></td>
+        <td class="c-plaene">${planTag('M','Montageplan',e.montagePlanId,mp)}${planTag('D','Detailplan',e.detailPlanId,dp)}</td>
         <td>${statusChip(e.status)}</td>
         <td>${(e.fotos||[]).length}</td>
         <td class="c-akt"><button class="btn sm ghost" data-el-edit="${e.id}">Bearbeiten</button><button class="btn sm ghost" data-el-scan="${e.id}">Monteur-Ansicht</button></td>
@@ -773,8 +799,38 @@ function elementForm(e,o){
     ${feld('barcode','Barcode-Nummer',e.barcode,{ph:'wird automatisch vergeben'})}
     <label class="feld"><span>Montageplan</span><select name="montagePlanId">${opt('montage',e.montagePlanId)}</select></label>
     <label class="feld"><span>Detailplan</span><select name="detailPlanId">${opt('detail',e.detailPlanId)}</select></label>
+    <label class="feld"><span>oder neuen Montageplan hochladen</span><input type="file" name="neuMontage" accept="application/pdf,.pdf"></label>
+    <label class="feld"><span>oder neuen Detailplan hochladen</span><input type="file" name="neuDetail" accept="application/pdf,.pdf"></label>
     <label class="feld"><span>Status</span><select name="status">${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${k===(e.status||'geplant')?'selected':''}>${v}</option>`).join('')}</select></label>
   </div>`;
+}
+const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+function planHochladen(file,art,objektId,buf){
+  const {id,done}=putFile(file.name,'application/pdf',buf);
+  const p={id:uid(),objektId,art,name:file.name,fileId:id,url:'',size:file.size,created:Date.now()};
+  savePlan(p); return {planId:p.id,done};
+}
+function pdfPruefen(f){
+  if(!f) return false;
+  if(!/pdf$/i.test(f.type)&&!/\.pdf$/i.test(f.name)){ toast(`${f.name} ist kein PDF`); return false; }
+  if(f.size>25*1048576){ toast(`${f.name} ist grösser als 25 MB`); return false; }
+  return true;
+}
+async function formPlaene(form,d,objektId){
+  const laeufe=[];
+  for(const [feldName,art,ziel] of [['neuMontage','montage','montagePlanId'],['neuDetail','detail','detailPlanId']]){
+    const f=form.querySelector(`[name=${feldName}]`).files[0];
+    if(f&&pdfPruefen(f)){ const r=planHochladen(f,art,objektId,await f.arrayBuffer()); d[ziel]=r.planId; laeufe.push(r.done); }
+  }
+  if(laeufe.length){ toast('Plan wird hochgeladen'); Promise.all(laeufe).then(()=>toast('Plan hochgeladen und zugewiesen'),()=>{}); }
+}
+function autoZuweisen(planId,art,name,objektId){
+  const n=norm(name); const feldName=art==='montage'?'montagePlanId':'detailPlanId'; let z=0;
+  for(const e of S.elemente.filter(x=>x.objektId===objektId)){
+    const pn=norm(e.pos);
+    if(pn.length>=3&&n.includes(pn)&&!plan(e[feldName])){ patch('elemente',e.id,{[feldName]:planId}); z++; }
+  }
+  return z;
 }
 function autoBarcode(o){
   const base=(o.auftragNr||'').replace(/\D/g,'')||String(Date.now()).slice(-6);
@@ -828,6 +884,7 @@ const ACT={
     const o=obj(S.aktivObjekt); if(!o) return;
     const r=await dialog('Element hinzufügen',elementForm({status:'geplant'},o),{ok:'Element anlegen'}); if(!r) return;
     const e={...clean(r.data),id:uid(),objektId:o.id,fotos:[],montiert:null,created:Date.now()};
+    await formPlaene(r.form,e,o.id);
     if(!e.barcode) e.barcode=autoBarcode(o);
     if(e.status==='montiert') e.montiert={am:Date.now(),von:'Büro'};
     saveElem(e); S.aktivElement=e.id; renderAll(); toast('Element angelegt');
@@ -892,6 +949,7 @@ async function elementBearbeiten(id){
     elementLoeschen(e); if(S.aktivElement===e.id) S.aktivElement=null; renderAll(); toast('Element gelöscht'); return;
   }
   const d=clean(r.data);
+  await formPlaene(r.form,d,e.objektId);
   if(!d.barcode) d.barcode=e.barcode||autoBarcode(o);
   if(d.status==='montiert'&&e.status!=='montiert'&&!e.montiert) d.montiert={am:Date.now(),von:'Büro'};
   if(d.status!=='montiert') d.montiert=null;
@@ -972,7 +1030,7 @@ function renderScanElement(e){
       ${zeile('Objekt',o.name)}${zeile('Kunde',o.kunde)}${zeile('Adresse',[o.strasse,o.plzOrt].filter(Boolean).join(', '))}
       ${zeile('Geschoss',e.geschoss)}${zeile('Lieferdatum',fmt(lief(e)))}${zeile('Auftrag',o.auftragNr)}${zeile('Barcode',e.barcode)}
     </dl>
-    <section class="sc-block"><h2>Pläne</h2><div id="pkMontage"></div><div id="pkDetail"></div></section>
+    <section class="sc-block"><h2>Pläne</h2><div id="pkMontage"></div><div id="pkDetail"></div>${weiterePlaene(e,mp,dp)}</section>
     <section class="sc-block"><h2>Montage</h2>
       <div class="sc-stapel">
         <label class="feld"><span>Monteur</span><input id="monteurName" value="${h(LS.get('monteur','')||'')}" placeholder="Vor- und Nachname" autocomplete="name"></label>
@@ -991,14 +1049,22 @@ function renderScanElement(e){
     <footer class="sc-fuss"><a href="#" data-act="zurVerwaltung">Zur Verwaltung</a></footer>
   </div>`;
   syncStatus();
-  planKarte(mp,'Montageplan','#pkMontage');
-  planKarte(dp,'Detailplan','#pkDetail');
+  planKarte(mp,'Montageplan','#pkMontage',e.montagePlanId);
+  planKarte(dp,'Detailplan','#pkDetail',e.detailPlanId);
   renderFotos(e);
 }
 
-async function planKarte(p,titel,slot){
+function weiterePlaene(e,mp,dp){
+  const rest=S.plaene.filter(p=>p.objektId===e.objektId&&p!==mp&&p!==dp)
+    .sort((a,b)=>(a.art===b.art?0:a.art==='montage'?-1:1)||String(a.name).localeCompare(String(b.name),'de',{numeric:true}));
+  if(!rest.length) return '';
+  return `<h3 class="sc-h3">${mp||dp?'Weitere Pläne zum Objekt':'Alle Pläne zum Objekt'}</h3>`+rest.map(p=>`<div class="pk klein"><div class="pk-text"><strong>${h(p.name)}</strong><span>${p.art==='montage'?'Montageplan':'Detailplan'}</span></div>
+    <div class="pk-akt">${p.fileId?`<button class="btn primary" data-pdf="${p.id}">Öffnen</button>`:p.url?`<a class="btn primary" href="${h(p.url)}" target="_blank" rel="noopener">Öffnen</a>`:''}</div></div>`).join('');
+}
+async function planKarte(p,titel,slot,planId){
   const el=$(slot); if(!el) return;
-  if(!p){ el.innerHTML=`<div class="pk leer"><strong>${titel}</strong><span>Für dieses Element ist kein ${titel} hinterlegt.</span></div>`; return; }
+  if(!p&&planId){ el.innerHTML=`<div class="pk leer"><strong>${titel}</strong><span>Der zugewiesene ${titel} ist nicht in der Datenbank. Bitte im Büro beim Element neu hochladen.</span></div>`; return; }
+  if(!p){ el.innerHTML=`<div class="pk leer"><strong>${titel}</strong><span>Diesem Element ist noch kein ${titel} zugewiesen.</span></div>`; return; }
   el.innerHTML=`<div class="pk"><div class="pk-text"><strong>${titel}</strong><span>${h(p.name)}, wird geladen</span></div></div>`;
   let href=null, datei=false;
   if(p.fileId){ const f=await getFile(p.fileId); if(f){ href=objUrl(new Blob([f.data],{type:'application/pdf'})); datei=true; } }
@@ -1006,7 +1072,7 @@ async function planKarte(p,titel,slot){
   if($(slot)!==el) return;
   if(!href){ el.innerHTML=`<div class="pk leer"><strong>${titel}</strong><span>${h(p.name)} konnte nicht geladen werden. Bitte Internetverbindung prüfen.</span></div>`; return; }
   el.innerHTML=`<div class="pk"><div class="pk-text"><strong>${titel}</strong><span>${h(p.name)}</span></div>
-    <div class="pk-akt"><a class="btn primary" href="${h(href)}" target="_blank" rel="noopener">Öffnen</a>${datei?`<a class="btn" href="${h(href)}" download="${h(p.name)}">Herunterladen</a>`:''}</div></div>`;
+    <div class="pk-akt">${datei?`<button class="btn primary" data-pdf="${p.id}">Öffnen</button><a class="btn" href="${h(href)}" download="${h(p.name)}">Herunterladen</a>`:`<a class="btn primary" href="${h(href)}" target="_blank" rel="noopener">Öffnen</a>`}</div></div>`;
 }
 
 async function renderFotos(e){
@@ -1061,11 +1127,73 @@ async function fotoLoeschen(fid){
   delFile(fid); renderScanElement(e);
 }
 
+/* ---------- PDF-Ansicht (pdf.js, funktioniert auch auf iPhone) ---------- */
+const PDFJS='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+let pdfLib=null;
+function ladePdfJs(){
+  if(pdfLib) return pdfLib;
+  pdfLib=new Promise((res,rej)=>{
+    if(window.pdfjsLib) return res(window.pdfjsLib);
+    const sc=document.createElement('script'); sc.src=PDFJS+'pdf.min.js';
+    sc.onload=()=>{ const L=window.pdfjsLib; if(!L) return rej(new Error('pdf.js fehlt')); L.GlobalWorkerOptions.workerSrc=PDFJS+'pdf.worker.min.js'; res(L); };
+    sc.onerror=()=>rej(new Error('pdf.js nicht ladbar')); document.head.appendChild(sc);
+  });
+  pdfLib.catch(()=>{ pdfLib=null; });
+  return pdfLib;
+}
+const VW={doc:null,zoom:1,url:null,lauf:0};
+async function pdfOeffnen(id){
+  const p=plan(id); if(!p) return;
+  if(!p.fileId){ if(p.url) window.open(p.url,'_blank','noopener'); return; }
+  $('#viewer').hidden=false; document.body.classList.add('vw-offen');
+  $('#vwTitel').textContent=p.name; $('#vwInhalt').innerHTML='<p class="vw-info">Plan wird geladen</p>';
+  const dl=$('#vwDl'); dl.removeAttribute('href');
+  const lauf=++VW.lauf;
+  const f=await getFile(p.fileId);
+  if(lauf!==VW.lauf) return;
+  if(!f){ $('#vwInhalt').innerHTML='<p class="vw-info">Der Plan konnte nicht geladen werden. Bitte Internetverbindung prüfen und erneut versuchen.</p>'; return; }
+  if(VW.url) URL.revokeObjectURL(VW.url);
+  VW.url=URL.createObjectURL(new Blob([f.data],{type:'application/pdf'})); dl.href=VW.url; dl.download=p.name;
+  try{
+    const L=await ladePdfJs();
+    const d=await L.getDocument({data:new Uint8Array(f.data.slice(0))}).promise;
+    if(lauf!==VW.lauf){ d.destroy(); return; }
+    VW.doc=d; VW.zoom=1; await seitenZeichnen(lauf);
+  }catch(err){
+    console.warn(err);
+    if(lauf===VW.lauf) $('#vwInhalt').innerHTML=`<p class="vw-info">Die Vorschau ist nicht verfügbar.<br><br><a class="btn primary" href="${VW.url}" target="_blank" rel="noopener">Im Browser öffnen</a></p>`;
+  }
+}
+async function seitenZeichnen(lauf){
+  const box=$('#vwInhalt'); const d=VW.doc; if(!d) return;
+  const breite=Math.max(200,box.clientWidth-16)*VW.zoom; const dpr=Math.min(window.devicePixelRatio||1,2.5);
+  const canv=[]; box.innerHTML='';
+  for(let i=0;i<d.numPages;i++){ const c=document.createElement('canvas'); c.className='vw-seite'; box.appendChild(c); canv.push(c); }
+  for(let i=1;i<=d.numPages;i++){
+    if(lauf!==VW.lauf) return;
+    const page=await d.getPage(i); const v1=page.getViewport({scale:1});
+    let sc=breite/v1.width*dpr; const maxPx=12e6;
+    if(v1.width*v1.height*sc*sc>maxPx) sc=Math.sqrt(maxPx/(v1.width*v1.height));
+    const vp=page.getViewport({scale:sc}); const c=canv[i-1];
+    c.width=Math.floor(vp.width); c.height=Math.floor(vp.height);
+    c.style.width=breite+'px'; c.style.height=(breite*v1.height/v1.width)+'px';
+    await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+  }
+}
+function viewerZu(){
+  VW.lauf++; $('#viewer').hidden=true; document.body.classList.remove('vw-offen'); $('#vwInhalt').innerHTML='';
+  if(VW.doc){ VW.doc.destroy(); VW.doc=null; }
+}
+function viewerZoom(f){ if(!VW.doc) return; VW.zoom=Math.min(4,Math.max(1,VW.zoom*f)); seitenZeichnen(++VW.lauf); }
+
 /* ---------- Ereignisse ---------- */
 document.addEventListener('click',ev=>{
   const t=ev.target;
   const act=t.closest('[data-act]');
   if(act&&ACT[act.dataset.act]){ ev.preventDefault(); ACT[act.dataset.act](act); return; }
+  let vb=t.closest('[data-vw]');
+  if(vb){ const a=vb.dataset.vw; if(a==='zu') viewerZu(); else if(a==='plus') viewerZoom(1.5); else if(a==='minus') viewerZoom(1/1.5); return; }
+  if((vb=t.closest('[data-pdf]'))){ pdfOeffnen(vb.dataset.pdf); return; }
   const oi=t.closest('[data-obj]');
   if(oi){ S.aktivObjekt=oi.dataset.obj; S.aktivElement=null; S.auswahl.clear(); renderAll(); return; }
   let b;
@@ -1079,6 +1207,7 @@ document.addEventListener('click',ev=>{
   if(row&&!t.closest('button,input,a,label')) zeileWaehlen(row);
 });
 document.addEventListener('keydown',ev=>{
+  if(ev.key==='Escape'&&!$('#viewer').hidden){ viewerZu(); return; }
   const row=ev.target.closest&&ev.target.closest('[data-row]');
   if(row&&ev.target===row&&(ev.key==='Enter'||ev.key===' ')){ ev.preventDefault(); zeileWaehlen(row); }
 });
@@ -1092,17 +1221,16 @@ document.addEventListener('input',ev=>{ if(ev.target.id==='monteurName') LS.set(
 document.addEventListener('change',async ev=>{
   const t=ev.target;
   if(t.matches('[data-upload]')){
-    const art=t.dataset.upload, files=[...t.files]; t.value=''; const laeufe=[];
+    const art=t.dataset.upload, files=[...t.files]; t.value=''; const laeufe=[]; let zugewiesen=0;
     for(const f of files){
-      if(!/pdf$/i.test(f.type)&&!/\.pdf$/i.test(f.name)){ toast(`${f.name} ist kein PDF`); continue; }
-      if(f.size>25*1048576){ toast(`${f.name} ist grösser als 25 MB`); continue; }
-      const {id,done}=putFile(f.name,'application/pdf',await f.arrayBuffer());
-      savePlan({id:uid(),objektId:S.aktivObjekt,art,name:f.name,fileId:id,url:'',size:f.size,created:Date.now()});
-      laeufe.push(done);
+      if(!pdfPruefen(f)) continue;
+      const r=planHochladen(f,art,S.aktivObjekt,await f.arrayBuffer());
+      zugewiesen+=autoZuweisen(r.planId,art,f.name,S.aktivObjekt);
+      laeufe.push(r.done);
     }
     if(laeufe.length){
-      renderObjekt(); toast('Pläne werden hochgeladen');
-      Promise.all(laeufe).then(()=>toast(`${laeufe.length} Plan${laeufe.length>1?'e':''} hochgeladen`),()=>{});
+      renderAll(); toast('Pläne werden hochgeladen');
+      Promise.all(laeufe).then(()=>toast(`${laeufe.length} Plan${laeufe.length>1?'e':''} hochgeladen`+(zugewiesen?`, ${zugewiesen} Element${zugewiesen>1?'en':''} automatisch zugewiesen`:'. Jetzt beim Element unter Bearbeiten zuweisen.')),()=>{});
     }
   }else if(t.matches('[data-chk]')){
     t.checked?S.auswahl.add(t.dataset.chk):S.auswahl.delete(t.dataset.chk); updateAuswahlBtn();
