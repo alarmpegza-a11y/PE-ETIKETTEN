@@ -205,18 +205,20 @@ dialog::backdrop{background:rgba(18,30,45,.45)}
 .tb-rechts{align-items:center}
 .sc-kopf{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .sc-kopf .sync{padding:0}
-/* PDF-Ansicht */
-.viewer{position:fixed;inset:0;z-index:60;background:#2B3138;display:flex;flex-direction:column}
-.viewer[hidden]{display:none}
-body.vw-offen{overflow:hidden}
-.vw-kopf{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;justify-content:space-between;background:#fff;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top,0px))}
-.vw-kopf strong{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 160px}
-.vw-akt{display:flex;gap:6px;flex:none}
-.vw-akt .btn{min-width:40px;min-height:38px}
-.vw-inhalt{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:12px 8px calc(24px + env(safe-area-inset-bottom,0px))}
-.vw-seite{display:block;margin:0 auto 12px;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.35)}
-.vw-info{color:#fff;text-align:center;padding:40px 20px;margin:0}
 .plan-tag.kaputt{background:#FBE9E8;color:var(--rot);border:1.5px solid var(--rot)}
+.pk-status{display:block;font-size:13px;color:var(--stahl);margin-top:2px}
+.pk-status.fehler{color:var(--rot)}
+.pk-balken{height:4px;background:var(--beton);border-radius:2px;margin-top:8px;overflow:hidden;width:100%}
+.pk-balken i{display:block;height:100%;background:var(--blau);width:0;transition:width .2s}
+.pk{flex-direction:column;align-items:stretch;flex-wrap:nowrap;text-align:left}
+.pk-text{align-self:stretch}
+.pk-akt{flex-wrap:wrap;justify-content:flex-start;align-self:stretch}
+.pk-akt .btn{flex:0 1 auto}
+.zw-liste{display:grid;gap:4px;max-height:50vh;overflow:auto;border:1px solid var(--linie);border-radius:6px;padding:6px}
+.zw-liste label{display:flex;gap:10px;align-items:center;padding:6px 8px;border-radius:4px;font-size:14px}
+.zw-liste label:hover{background:var(--beton)}
+.zw-liste input{width:18px;height:18px;accent-color:var(--blau)}
+.zw-liste small{color:var(--stahl)}
 .sc-h3{font-size:15px;font-weight:700;margin:18px 0 10px;color:var(--stahl)}
 .pk.klein{padding:10px 12px}
 .pk.klein .pk-text strong{font-size:15px}
@@ -333,12 +335,6 @@ body.modus-scan{background:var(--beton)}
 <div id="scan"></div>
 <div id="print-area"></div>
 <dialog id="dlg"></dialog>
-<div id="viewer" class="viewer" hidden role="dialog" aria-modal="true" aria-label="Plan ansehen">
-  <header class="vw-kopf"><strong id="vwTitel"></strong>
-    <div class="vw-akt"><button class="btn sm" data-vw="minus" aria-label="Verkleinern">−</button><button class="btn sm" data-vw="plus" aria-label="Vergrössern">+</button><a class="btn sm" id="vwDl">Herunterladen</a><button class="btn sm primary" data-vw="zu">Schliessen</button></div>
-  </header>
-  <div class="vw-inhalt" id="vwInhalt"></div>
-</div>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <datalist id="gewerke">
@@ -420,23 +416,30 @@ function putFile(name,type,buf){
   ps.push(setDoc(ref('dateien',id),{name,type,size:u.length,chunks:n,created:Date.now()}));
   DB.put({id,name,type,data:buf}).catch(()=>{});
   const done=Promise.all(ps); fire(done);
+  offeneUploads++; done.finally(()=>{ offeneUploads--; });
   return {id,done};
 }
 const ladeLaeuft=new Map();
+const DATEI_FEHLER=new Map();
+function mitTimeout(p,ms){ return Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('Zeitüberschreitung')),ms))]); }
+function meldeFortschritt(id,fertig,total){ document.dispatchEvent(new CustomEvent('datei-fortschritt',{detail:{id,fertig,total}})); }
+let offeneUploads=0;
+window.addEventListener('beforeunload',ev=>{ if(offeneUploads>0){ ev.preventDefault(); ev.returnValue=''; } });
 function getFile(id){
   if(!id) return Promise.resolve(null);
   if(ladeLaeuft.has(id)) return ladeLaeuft.get(id);
   const p=(async()=>{
     const c=await DB.get(id).catch(()=>null); if(c) return c;
     try{
-      const m=await getDoc(ref('dateien',id)); if(!m.exists()) return null;
-      const md=m.data(); const n=md.chunks||1;
-      const teile=await Promise.all(Array.from({length:n},(_,i)=>getDoc(doc(fs,'dateien',id,'teile',String(i)))));
-      if(teile.some(t=>!t.exists())) return null;
+      const m=await mitTimeout(getDoc(ref('dateien',id)),45000); if(!m.exists()){ DATEI_FEHLER.set(id,'fehlt'); return null; }
+      const md=m.data(); const n=md.chunks||1; let fertig=0;
+      meldeFortschritt(id,0,n);
+      const teile=await Promise.all(Array.from({length:n},(_,i)=>mitTimeout(getDoc(doc(fs,'dateien',id,'teile',String(i))),120000).then(t=>{ meldeFortschritt(id,++fertig,n); return t; })));
+      if(teile.some(t=>!t.exists())){ DATEI_FEHLER.set(id,'unvollstaendig'); return null; }
       const parts=teile.map(t=>b64ToBytes(t.data().d)); const total=parts.reduce((a,x)=>a+x.length,0);
       const u=new Uint8Array(total); let o=0; parts.forEach(x=>{ u.set(x,o); o+=x.length; });
       const f={id,name:md.name,type:md.type,data:u.buffer}; DB.put(f).catch(()=>{}); return f;
-    }catch(err){ console.warn('Datei nicht ladbar',id,err); return null; }
+    }catch(err){ console.warn('Datei nicht ladbar',id,err); DATEI_FEHLER.set(id,'netz'); return null; }
   })();
   ladeLaeuft.set(id,p); p.finally(()=>ladeLaeuft.delete(id));
   return p;
@@ -640,10 +643,10 @@ function planSpalte(art,titel,liste){
     <div class="plan-titel"><h3>${titel}</h3><label class="btn sm">PDF hochladen<input type="file" accept="application/pdf,.pdf" multiple hidden data-upload="${art}"></label></div>
     ${liste.length?`<ul class="plan-liste">${liste.map(p=>{
       const n=S.elemente.filter(e=>e.montagePlanId===p.id||e.detailPlanId===p.id).length;
-      const info=[p.fileId?kb(p.size||0):'nur Online-Link', p.url&&p.fileId?'mit Online-Link':'', n?`${n} Element${n>1?'e':''}`:'nicht zugewiesen'].filter(Boolean).join(', ');
+      const info=[p.fertig===false?'wird hochgeladen, Seite offen lassen':'',p.fileId?kb(p.size||0):'nur Online-Link', p.url&&p.fileId?'mit Online-Link':'', n?`${n} Element${n>1?'e':''}`:'nicht zugewiesen'].filter(Boolean).join(', ');
       return `<li><span class="pdf-ico" aria-hidden="true">PDF</span>
         <span class="plan-name" title="${h(p.name)}">${h(p.name)}<small>${h(info)}</small></span>
-        <span class="plan-akt"><button class="btn sm ghost" data-pdf="${p.id}">Ansehen</button><button class="btn sm ghost" data-plan-dl="${p.id}">Herunterladen</button><button class="btn sm ghost" data-plan-edit="${p.id}">Link</button><button class="btn sm ghost danger" data-plan-del="${p.id}">Entfernen</button></span></li>`;
+        <span class="plan-akt"><button class="btn sm ghost" data-plan-zuweisen="${p.id}">Zuweisen</button><button class="btn sm ghost" data-plan-dl="${p.id}">Herunterladen</button><button class="btn sm ghost" data-plan-edit="${p.id}">Link</button><button class="btn sm ghost danger" data-plan-del="${p.id}">Entfernen</button></span></li>`;
     }).join('')}</ul>`:`<p class="leer">Noch keine ${titel} hochgeladen.</p>`}
   </div>`;
 }
@@ -807,8 +810,9 @@ function elementForm(e,o){
 const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 function planHochladen(file,art,objektId,buf){
   const {id,done}=putFile(file.name,'application/pdf',buf);
-  const p={id:uid(),objektId,art,name:file.name,fileId:id,url:'',size:file.size,created:Date.now()};
-  savePlan(p); return {planId:p.id,done};
+  const p={id:uid(),objektId,art,name:file.name,fileId:id,url:'',size:file.size,created:Date.now(),fertig:false};
+  savePlan(p); done.then(()=>patch('plaene',p.id,{fertig:true}),()=>{});
+  return {planId:p.id,done};
 }
 function pdfPruefen(f){
   if(!f) return false;
@@ -1051,28 +1055,88 @@ function renderScanElement(e){
   syncStatus();
   planKarte(mp,'Montageplan','#pkMontage',e.montagePlanId);
   planKarte(dp,'Detailplan','#pkDetail',e.detailPlanId);
+  allePkZeichnen();
   renderFotos(e);
 }
 
-function weiterePlaene(e,mp,dp){
-  const rest=S.plaene.filter(p=>p.objektId===e.objektId&&p!==mp&&p!==dp)
-    .sort((a,b)=>(a.art===b.art?0:a.art==='montage'?-1:1)||String(a.name).localeCompare(String(b.name),'de',{numeric:true}));
-  if(!rest.length) return '';
-  return `<h3 class="sc-h3">${mp||dp?'Weitere Pläne zum Objekt':'Alle Pläne zum Objekt'}</h3>`+rest.map(p=>`<div class="pk klein"><div class="pk-text"><strong>${h(p.name)}</strong><span>${p.art==='montage'?'Montageplan':'Detailplan'}</span></div>
-    <div class="pk-akt">${p.fileId?`<button class="btn primary" data-pdf="${p.id}">Öffnen</button>`:p.url?`<a class="btn primary" href="${h(p.url)}" target="_blank" rel="noopener">Öffnen</a>`:''}</div></div>`).join('');
+/* Pläne in der Monteur-Ansicht: laden, dann öffnen / senden / speichern */
+const PLAN_CACHE=new Map(); // planId -> {status:'laedt'|'bereit'|'fehler', url, file, fertig, total, fehler}
+function planGruppe(titel,liste){
+  if(!liste.length) return '';
+  return `<h3 class="sc-h3">${titel}</h3>`+liste.map(p=>`<div class="pk klein" data-pk="${p.id}"></div>`).join('');
 }
-async function planKarte(p,titel,slot,planId){
+function weiterePlaene(e,mp,dp){
+  const sortN=(a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true});
+  const rest=S.plaene.filter(p=>p.objektId===e.objektId&&p!==mp&&p!==dp);
+  const pre=mp||dp?'Weitere ':'';
+  return planGruppe(pre+'Montagepläne zum Objekt',rest.filter(p=>p.art==='montage').sort(sortN))
+        +planGruppe(pre+'Detailpläne zum Objekt',rest.filter(p=>p.art==='detail').sort(sortN));
+}
+function planKarte(p,titel,slot,planId){
   const el=$(slot); if(!el) return;
   if(!p&&planId){ el.innerHTML=`<div class="pk leer"><strong>${titel}</strong><span>Der zugewiesene ${titel} ist nicht in der Datenbank. Bitte im Büro beim Element neu hochladen.</span></div>`; return; }
   if(!p){ el.innerHTML=`<div class="pk leer"><strong>${titel}</strong><span>Diesem Element ist noch kein ${titel} zugewiesen.</span></div>`; return; }
-  el.innerHTML=`<div class="pk"><div class="pk-text"><strong>${titel}</strong><span>${h(p.name)}, wird geladen</span></div></div>`;
-  let href=null, datei=false;
-  if(p.fileId){ const f=await getFile(p.fileId); if(f){ href=objUrl(new Blob([f.data],{type:'application/pdf'})); datei=true; } }
-  if(!href&&p.url) href=p.url;
-  if($(slot)!==el) return;
-  if(!href){ el.innerHTML=`<div class="pk leer"><strong>${titel}</strong><span>${h(p.name)} konnte nicht geladen werden. Bitte Internetverbindung prüfen.</span></div>`; return; }
-  el.innerHTML=`<div class="pk"><div class="pk-text"><strong>${titel}</strong><span>${h(p.name)}</span></div>
-    <div class="pk-akt">${datei?`<button class="btn primary" data-pdf="${p.id}">Öffnen</button><a class="btn" href="${h(href)}" download="${h(p.name)}">Herunterladen</a>`:`<a class="btn primary" href="${h(href)}" target="_blank" rel="noopener">Öffnen</a>`}</div></div>`;
+  el.innerHTML=`<div class="pk" data-pk="${p.id}" data-pk-titel="${h(titel)}"></div>`;
+  pkZeichnen(p.id);
+  if(p.fileId&&!PLAN_CACHE.has(p.id)) planLaden(p.id);
+}
+function allePkZeichnen(){ $$('[data-pk]').forEach(el=>pkZeichnen(el.dataset.pk)); }
+function pkZeichnen(id){
+  const p=plan(id); const c=PLAN_CACHE.get(id);
+  $$(`[data-pk="${id}"]`).forEach(el=>{
+    if(!p){ el.innerHTML=''; return; }
+    const titel=el.dataset.pkTitel;
+    const kopf=`<div class="pk-text"><strong>${titel?h(titel):h(p.name)}</strong><span>${titel?h(p.name):(p.art==='montage'?'Montageplan':'Detailplan')}${p.size?', '+kb(p.size):''}</span>`;
+    if(!p.fileId){
+      el.innerHTML=kopf+`</div>`+(p.url?`<div class="pk-akt"><a class="btn primary" href="${h(p.url)}" target="_blank" rel="noopener">PDF öffnen</a></div>`:'');
+      return;
+    }
+    if(!c){
+      el.innerHTML=kopf+(p.fertig===false?'<span class="pk-status">Upload im Büro läuft noch</span>':'')+`</div><div class="pk-akt"><button class="btn primary" data-pk-laden="${id}">PDF laden</button></div>`;
+    }else if(c.status==='laedt'){
+      const pr=c.total?Math.round(c.fertig/c.total*100):0;
+      el.innerHTML=kopf+`<span class="pk-status">PDF wird geladen${c.total>1?`, ${c.fertig} von ${c.total} Teilen`:''}</span><div class="pk-balken"><i style="width:${Math.max(5,pr)}%"></i></div></div>`;
+    }else if(c.status==='bereit'){
+      const teilen=navigator.canShare&&c.file&&navigator.canShare({files:[c.file]});
+      el.innerHTML=kopf+`</div><div class="pk-akt"><a class="btn primary" href="${c.url}" target="_blank" rel="noopener">PDF öffnen</a>${teilen?`<button class="btn" data-pk-teilen="${id}">Senden / Speichern</button>`:''}<a class="btn" href="${c.url}" download="${h(p.name)}">Herunterladen</a></div>`;
+    }else{
+      const txt={fehlt:'Die Datei ist nicht in der Datenbank. Der Upload im Büro wurde wohl nicht abgeschlossen, bitte dort neu hochladen.',unvollstaendig:'Die Datei ist unvollständig. Der Upload im Büro wurde wohl abgebrochen, bitte dort neu hochladen.',netz:'Keine Verbindung oder zu langsam. Bitte erneut versuchen.'}[c.fehler]||'Die Datei konnte nicht geladen werden.';
+      el.innerHTML=kopf+`<span class="pk-status fehler">${txt}</span></div><div class="pk-akt"><button class="btn primary" data-pk-laden="${id}">Erneut versuchen</button></div>`;
+    }
+  });
+}
+async function planLaden(id){
+  const p=plan(id); if(!p||!p.fileId) return;
+  const alt=PLAN_CACHE.get(id); if(alt&&(alt.status==='laedt'||alt.status==='bereit')) return;
+  PLAN_CACHE.set(id,{status:'laedt',fertig:0,total:0}); DATEI_FEHLER.delete(p.fileId); pkZeichnen(id);
+  const f=await getFile(p.fileId);
+  if(!f){ PLAN_CACHE.set(id,{status:'fehler',fehler:DATEI_FEHLER.get(p.fileId)||'netz'}); pkZeichnen(id); return; }
+  const blob=new Blob([f.data],{type:'application/pdf'});
+  let file=null; try{ file=new File([blob],p.name,{type:'application/pdf'}); }catch(e){}
+  PLAN_CACHE.set(id,{status:'bereit',url:URL.createObjectURL(blob),file});
+  pkZeichnen(id);
+}
+document.addEventListener('datei-fortschritt',ev=>{
+  const {id,fertig,total}=ev.detail;
+  for(const p of S.plaene) if(p.fileId===id){ const c=PLAN_CACHE.get(p.id); if(c&&c.status==='laedt'){ c.fertig=fertig; c.total=total; pkZeichnen(p.id); } }
+});
+async function planTeilen(id){
+  const c=PLAN_CACHE.get(id); const p=plan(id); if(!c||!c.file||!p) return;
+  try{ await navigator.share({files:[c.file],title:p.name}); }
+  catch(err){ if(err&&err.name!=='AbortError') toast('Senden nicht möglich, bitte Herunterladen verwenden'); }
+}
+async function planZuweisenDialog(p){
+  const els=elementeVon(p.objektId); const feldName=p.art==='montage'?'montagePlanId':'detailPlanId';
+  if(!els.length){ toast('Dieses Objekt hat noch keine Elemente'); return; }
+  const r=await dialog(`${p.art==='montage'?'Montageplan':'Detailplan'} zuweisen`,`<p><strong>${h(p.name)}</strong></p><p class="leer">Elemente auswählen, die diesen Plan bekommen. Ein Montageplan kann für viele Elemente gelten.</p>
+    <div class="zw-liste">${els.map(e=>{ const alt=plan(e[feldName]); return `<label><input type="checkbox" name="el_${e.id}" ${e[feldName]===p.id?'checked':''}><span><strong>${h(e.pos)}</strong> ${h(e.bezeichnung)}${alt&&alt.id!==p.id?`<br><small>bisher: ${h(alt.name)}</small>`:''}</span></label>`; }).join('')}</div>`,{ok:'Zuweisen'});
+  if(!r) return; let n=0;
+  for(const e of els){
+    const an=!!r.form.querySelector(`[name="el_${e.id}"]`).checked;
+    if(an&&e[feldName]!==p.id){ patch('elemente',e.id,{[feldName]:p.id}); n++; }
+    else if(!an&&e[feldName]===p.id){ patch('elemente',e.id,{[feldName]:''}); n++; }
+  }
+  renderAll(); toast(n?`Zuweisung bei ${n} Element${n>1?'en':''} geändert`:'Keine Änderung');
 }
 
 async function renderFotos(e){
@@ -1127,73 +1191,16 @@ async function fotoLoeschen(fid){
   delFile(fid); renderScanElement(e);
 }
 
-/* ---------- PDF-Ansicht (pdf.js, funktioniert auch auf iPhone) ---------- */
-const PDFJS='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
-let pdfLib=null;
-function ladePdfJs(){
-  if(pdfLib) return pdfLib;
-  pdfLib=new Promise((res,rej)=>{
-    if(window.pdfjsLib) return res(window.pdfjsLib);
-    const sc=document.createElement('script'); sc.src=PDFJS+'pdf.min.js';
-    sc.onload=()=>{ const L=window.pdfjsLib; if(!L) return rej(new Error('pdf.js fehlt')); L.GlobalWorkerOptions.workerSrc=PDFJS+'pdf.worker.min.js'; res(L); };
-    sc.onerror=()=>rej(new Error('pdf.js nicht ladbar')); document.head.appendChild(sc);
-  });
-  pdfLib.catch(()=>{ pdfLib=null; });
-  return pdfLib;
-}
-const VW={doc:null,zoom:1,url:null,lauf:0};
-async function pdfOeffnen(id){
-  const p=plan(id); if(!p) return;
-  if(!p.fileId){ if(p.url) window.open(p.url,'_blank','noopener'); return; }
-  $('#viewer').hidden=false; document.body.classList.add('vw-offen');
-  $('#vwTitel').textContent=p.name; $('#vwInhalt').innerHTML='<p class="vw-info">Plan wird geladen</p>';
-  const dl=$('#vwDl'); dl.removeAttribute('href');
-  const lauf=++VW.lauf;
-  const f=await getFile(p.fileId);
-  if(lauf!==VW.lauf) return;
-  if(!f){ $('#vwInhalt').innerHTML='<p class="vw-info">Der Plan konnte nicht geladen werden. Bitte Internetverbindung prüfen und erneut versuchen.</p>'; return; }
-  if(VW.url) URL.revokeObjectURL(VW.url);
-  VW.url=URL.createObjectURL(new Blob([f.data],{type:'application/pdf'})); dl.href=VW.url; dl.download=p.name;
-  try{
-    const L=await ladePdfJs();
-    const d=await L.getDocument({data:new Uint8Array(f.data.slice(0))}).promise;
-    if(lauf!==VW.lauf){ d.destroy(); return; }
-    VW.doc=d; VW.zoom=1; await seitenZeichnen(lauf);
-  }catch(err){
-    console.warn(err);
-    if(lauf===VW.lauf) $('#vwInhalt').innerHTML=`<p class="vw-info">Die Vorschau ist nicht verfügbar.<br><br><a class="btn primary" href="${VW.url}" target="_blank" rel="noopener">Im Browser öffnen</a></p>`;
-  }
-}
-async function seitenZeichnen(lauf){
-  const box=$('#vwInhalt'); const d=VW.doc; if(!d) return;
-  const breite=Math.max(200,box.clientWidth-16)*VW.zoom; const dpr=Math.min(window.devicePixelRatio||1,2.5);
-  const canv=[]; box.innerHTML='';
-  for(let i=0;i<d.numPages;i++){ const c=document.createElement('canvas'); c.className='vw-seite'; box.appendChild(c); canv.push(c); }
-  for(let i=1;i<=d.numPages;i++){
-    if(lauf!==VW.lauf) return;
-    const page=await d.getPage(i); const v1=page.getViewport({scale:1});
-    let sc=breite/v1.width*dpr; const maxPx=12e6;
-    if(v1.width*v1.height*sc*sc>maxPx) sc=Math.sqrt(maxPx/(v1.width*v1.height));
-    const vp=page.getViewport({scale:sc}); const c=canv[i-1];
-    c.width=Math.floor(vp.width); c.height=Math.floor(vp.height);
-    c.style.width=breite+'px'; c.style.height=(breite*v1.height/v1.width)+'px';
-    await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
-  }
-}
-function viewerZu(){
-  VW.lauf++; $('#viewer').hidden=true; document.body.classList.remove('vw-offen'); $('#vwInhalt').innerHTML='';
-  if(VW.doc){ VW.doc.destroy(); VW.doc=null; }
-}
-function viewerZoom(f){ if(!VW.doc) return; VW.zoom=Math.min(4,Math.max(1,VW.zoom*f)); seitenZeichnen(++VW.lauf); }
 
 /* ---------- Ereignisse ---------- */
 document.addEventListener('click',ev=>{
   const t=ev.target;
   const act=t.closest('[data-act]');
   if(act&&ACT[act.dataset.act]){ ev.preventDefault(); ACT[act.dataset.act](act); return; }
-  let vb=t.closest('[data-vw]');
-  if(vb){ const a=vb.dataset.vw; if(a==='zu') viewerZu(); else if(a==='plus') viewerZoom(1.5); else if(a==='minus') viewerZoom(1/1.5); return; }
-  if((vb=t.closest('[data-pdf]'))){ pdfOeffnen(vb.dataset.pdf); return; }
+  let vb;
+  if((vb=t.closest('[data-pk-laden]'))){ planLaden(vb.dataset.pkLaden); return; }
+  if((vb=t.closest('[data-pk-teilen]'))){ planTeilen(vb.dataset.pkTeilen); return; }
+  if((vb=t.closest('[data-plan-zuweisen]'))){ const p=plan(vb.dataset.planZuweisen); if(p) planZuweisenDialog(p); return; }
   const oi=t.closest('[data-obj]');
   if(oi){ S.aktivObjekt=oi.dataset.obj; S.aktivElement=null; S.auswahl.clear(); renderAll(); return; }
   let b;
@@ -1207,7 +1214,6 @@ document.addEventListener('click',ev=>{
   if(row&&!t.closest('button,input,a,label')) zeileWaehlen(row);
 });
 document.addEventListener('keydown',ev=>{
-  if(ev.key==='Escape'&&!$('#viewer').hidden){ viewerZu(); return; }
   const row=ev.target.closest&&ev.target.closest('[data-row]');
   if(row&&ev.target===row&&(ev.key==='Enter'||ev.key===' ')){ ev.preventDefault(); zeileWaehlen(row); }
 });
