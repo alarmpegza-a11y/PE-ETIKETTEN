@@ -182,19 +182,20 @@ dialog.breit{width:min(1000px,calc(100vw - 24px))}
 .thumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .thumbs img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;display:block;background:#fff}
 
-/* Etikette 10 x 10 cm */
-.etikette{width:100mm;height:100mm;background:#fff;color:#000;font-family:Arial,"Helvetica Neue",Helvetica,sans-serif;padding:5mm 5mm 4.5mm;display:flex;flex-direction:column;overflow:hidden}
+/* Etikette: Grösse, Ränder, Schrift, QR und Barcode kommen aus den Layout-Einstellungen (applyLayout, <style id="etLayout">) */
+.etikette{--s:1;position:relative;width:100mm;height:100mm;background:#fff;color:#000;font-family:Arial,"Helvetica Neue",Helvetica,sans-serif;padding:27mm 5mm 4.5mm;display:flex;flex-direction:column;overflow:hidden}
+.et-vordruck{position:absolute;left:0;right:0;top:0;border-bottom:1px dashed #9AA6B2;background:repeating-linear-gradient(45deg,#F3F5F7 0 6px,#fff 6px 12px);color:#7A8794;font:600 8pt Arial,sans-serif;display:grid;place-items:center}
 .et-logo{margin-bottom:3.5mm;flex:none}
 .et-logo .logo-svg{display:block;width:100%;height:auto}
 .et-logo .logo-img{display:block;max-width:100%;max-height:19mm;object-fit:contain;object-position:left}
 .et-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 29mm;grid-template-rows:1fr auto;column-gap:3mm}
 .et-text{grid-column:1;grid-row:1;min-height:0;overflow:hidden}
-.et-titel{font-weight:700;font-size:12.5pt;line-height:1.15;margin-bottom:1.2mm}
-.et-zeile{font-size:11pt;line-height:1.22}
-.et-lief{font-size:9.5pt;margin-top:1.6mm}
-.et-lief b{font-size:10.5pt}
-.et-elem{font-weight:700;font-size:11.5pt;margin-top:1.4mm;line-height:1.18}
-.et-gewerk{font-weight:700;font-size:10.5pt;margin-top:.8mm;line-height:1.18}
+.et-titel{font-weight:700;font-size:calc(12.5pt * var(--s));line-height:1.15;margin-bottom:1.2mm}
+.et-zeile{font-size:calc(11pt * var(--s));line-height:1.22}
+.et-lief{font-size:calc(9.5pt * var(--s));margin-top:1.6mm}
+.et-lief b{font-size:calc(10.5pt * var(--s))}
+.et-elem{font-weight:700;font-size:calc(11.5pt * var(--s));margin-top:1.4mm;line-height:1.18}
+.et-gewerk{font-weight:700;font-size:calc(10.5pt * var(--s));margin-top:.8mm;line-height:1.18}
 .et-bar{grid-column:1;grid-row:2;margin-top:2mm;width:46mm}
 .et-bar svg{display:block;width:100%;height:8mm}
 .et-bar-nr{font-size:8pt;letter-spacing:.06em;text-align:center;margin-top:.4mm;font-variant-numeric:tabular-nums}
@@ -202,6 +203,38 @@ dialog.breit{width:min(1000px,calc(100vw - 24px))}
 .et-qr img,.qr-fehlt{display:block;width:29mm;height:29mm}
 .qr-fehlt{border:1px dashed #999;display:grid;place-items:center;font-size:8pt;color:#666}
 .et-qr span{display:block;font-size:6.5pt;line-height:1.1;margin-top:1mm;color:#222}
+
+/* Layout-Dialog */
+.lay{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;align-items:start}
+.lay-felder{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+.lay-felder h3{grid-column:1/-1;font-size:13px;color:var(--stahl);margin:6px 0 -2px}
+.lay-vorschau{background:var(--tisch);border-radius:8px;padding:14px;overflow:hidden}
+.lay-vorschau .etikette{box-shadow:0 1px 2px rgba(20,35,55,.18),0 8px 22px rgba(20,35,55,.16);transform-origin:top left}
+
+/* Fotos: Galerie und Grossansicht */
+.galerie h3{font-size:15px;margin:14px 0 8px}
+.galerie h3:first-child{margin-top:0}
+.gal-raster{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.gal-raster button{padding:0;border:0;background:var(--tisch);border-radius:6px;overflow:hidden;cursor:zoom-in;aspect-ratio:4/3}
+.gal-raster img{width:100%;height:100%;object-fit:cover;display:block}
+.thumbs img{cursor:zoom-in}
+.c-fotos button{min-width:34px}
+#lb{width:100vw;height:100vh;max-width:none;max-height:none;margin:0;border-radius:0;background:rgba(10,16,24,.94);color:#fff;padding:0}
+#lb::backdrop{background:rgba(10,16,24,.94)}
+.lb{position:absolute;inset:0;display:grid;grid-template-rows:auto 1fr auto}
+.lb-kopf{display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:14px}
+.lb-kopf .spacer{flex:1}
+.lb-bild{min-height:0;display:grid;place-items:center;padding:0 60px}
+.lb-bild img{max-width:100%;max-height:calc(100vh - 130px);object-fit:contain;border-radius:4px}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:48px;height:64px;border:0;border-radius:8px;background:rgba(255,255,255,.12);color:#fff;font-size:28px;cursor:pointer}
+.lb-nav:hover{background:rgba(255,255,255,.25)}
+.lb-nav.l{left:8px}.lb-nav.r{right:8px}
+.lb .btn{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.3);color:#fff}
+.lb-fuss{padding:10px 16px;font-size:13px;color:#C9D3DE;text-align:center}
+
+/* Foto-Code in der Monteur-Ansicht */
+.code-box{display:flex;gap:10px;align-items:flex-end}
+.code-box .feld{flex:1}
 
 /* Dialog */
 dialog{border:0;border-radius:10px;padding:0;width:min(620px,calc(100vw - 24px));max-height:calc(100vh - 40px);box-shadow:0 24px 60px rgba(10,25,45,.3);color:var(--tinte)}
@@ -350,6 +383,7 @@ body.modus-scan{background:var(--beton)}
   #print-area .etikette{box-shadow:none;break-after:page;page-break-after:always}
   #print-area .etikette:last-child{break-after:auto;page-break-after:auto}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .et-vordruck{display:none!important}
 }
 </style>
 </head>
@@ -365,6 +399,7 @@ body.modus-scan{background:var(--beton)}
     <div class="tb-rechts">
       <span class="sync"></span>
       <a class="btn" href="#produktion">Produktion scannen</a>
+      <button class="btn ghost" data-act="layout">Etiketten-Layout</button>
       <button class="btn ghost" data-act="einstellungen">Einstellungen</button>
     </div>
   </header>
@@ -383,6 +418,8 @@ body.modus-scan{background:var(--beton)}
 <div id="produktion"></div>
 <div id="print-area"></div>
 <dialog id="dlg"></dialog>
+<dialog id="lb"></dialog>
+<style id="etLayout"></style>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <datalist id="gewerke">
@@ -611,7 +648,7 @@ function starteListener(){
   abmelden.push(onSnapshot(ref('settings','app'),{includeMetadataChanges:true},snap=>{
     meta.settings=snap.metadata; syncStatus();
     S.settings=snap.exists()?snap.data():{};
-    qrCache.clear(); applyLogo();
+    qrCache.clear(); applyLogo(); applyLayout();
     if(!bereit.settings){ bereit.settings=true; pruefeStart(); } else planRender();
   },syncFehler));
 }
@@ -627,8 +664,10 @@ const planRender=debounce(()=>{
     const e=elem(S.scanElement);
     if(!e){ route(); return; }
     const fokus=document.activeElement&&document.activeElement.id==='monteurName';
+    const code=$('#fotoCode'), codeWert=code?code.value:'', codeFokus=document.activeElement===code&&!!code;
     renderScanElement(e);
     if(fokus){ const i=$('#monteurName'); if(i){ i.focus(); const l=i.value.length; i.setSelectionRange(l,l); } }
+    const c2=$('#fotoCode'); if(c2){ c2.value=codeWert; if(codeFokus) c2.focus(); }
   }else{
     if(!obj(S.aktivObjekt)) S.aktivObjekt=ersteObjektId();
     renderAll();
@@ -694,11 +733,37 @@ function barcodeSvg(code){
   }catch(err){ console.warn('Barcode-Fehler',err); return ''; }
 }
 
+/* ---------- Etiketten-Layout (alle Masse in mm) ---------- */
+let layoutVorschau=null;
+// Das Logo ist auf den Etiketten vorgedruckt. «oben» ist der Freiraum dafür, der Text beginnt darunter.
+const LAYOUT_STD={breite:100,hoehe:100,logo:false,oben:27,links:5,rechts:5,unten:4.5,schrift:100,qr:29,barB:46,barH:8};
+const LAYOUT_FELDER=[
+  ['Etikette','breite','Breite',40,200,1],['Etikette','hoehe','Höhe',40,200,1],
+  ['Ränder','oben','Oben (Freiraum Logo)',0,80,.5],['Ränder','unten','Unten',0,40,.5],['Ränder','links','Links',0,40,.5],['Ränder','rechts','Rechts',0,40,.5],
+  ['Inhalt','schrift','Schriftgrösse in %',50,200,5],['Inhalt','qr','QR-Code Grösse',12,60,1],['Inhalt','barB','Barcode Breite',20,90,1],['Inhalt','barH','Barcode Höhe',4,25,.5]
+];
+function layout(x){
+  const l={...LAYOUT_STD,...(x||S.settings.layout||{})};
+  for(const [,k,,min,max] of LAYOUT_FELDER){ const n=parseFloat(l[k]); l[k]=isFinite(n)?Math.min(max,Math.max(min,n)):LAYOUT_STD[k]; }
+  l.logo=!!l.logo; return l;
+}
+function applyLayout(x){
+  const l=layout(x); const st=$('#etLayout'); if(!st) return;
+  st.textContent=`.etikette{--s:${l.schrift/100};width:${l.breite}mm;height:${l.hoehe}mm;padding:${l.oben}mm ${l.rechts}mm ${l.unten}mm ${l.links}mm}
+.et-vordruck{height:${l.oben}mm}
+.et-body{grid-template-columns:minmax(0,1fr) ${l.qr}mm}
+.et-qr img,.qr-fehlt{width:${l.qr}mm;height:${l.qr}mm}
+.et-bar{width:${l.barB}mm}.et-bar svg{height:${l.barH}mm}
+.mass{grid-template-columns:24px ${l.breite}mm;grid-template-rows:24px ${l.hoehe}mm}
+@media print{@page{size:${l.breite}mm ${l.hoehe}mm;margin:0}}`;
+  document.body.classList.toggle('mit-logo',l.logo);
+}
+
 /* ---------- Etikette ---------- */
 function labelHTML(e){
   const o=obj(e.objektId)||{}; const qr=qrData(linkFor(e));
   return `<div class="etikette">
-    <div class="et-logo">${logoMarkup()}</div>
+    ${document.body.classList.contains('mit-logo')?`<div class="et-logo">${logoMarkup()}</div>`:`<div class="et-vordruck">vorgedrucktes Logo</div>`}
     <div class="et-body">
       <div class="et-text">
         <div class="et-titel">${h(o.name)}</div>
@@ -782,7 +847,7 @@ function tabelle(els){
         <td class="c-plaene">${planZelle(e,'montage')}${planZelle(e,'detail')}${planZelle(e,'produktion')}</td>
         <td><input class="anz" type="number" min="1" max="99" value="${anz(e)}" data-anz="${e.id}" aria-label="Anzahl Etiketten ${h(e.pos)}"></td>
         <td>${statusChip(e.status)}</td>
-        <td>${(e.fotos||[]).length}</td>
+        <td class="c-fotos">${(e.fotos||[]).length?`<button class="btn sm" data-galerie="${e.id}" title="Fotos ansehen">${(e.fotos||[]).length}</button>`:'0'}</td>
         <td class="c-akt"><button class="btn sm ghost" data-el-edit="${e.id}">Bearbeiten</button><button class="btn sm ghost" data-el-scan="${e.id}">Monteur-Ansicht</button></td>
       </tr>`;
     }).join('')}</tbody></table></div>`;
@@ -799,6 +864,7 @@ function renderObjekt(){
   const von=art=>S.plaene.filter(p=>p.objektId===o.id&&p.art===art).sort(sortN);
   const nPlaene=S.plaene.filter(p=>p.objektId===o.id).length;
   const nEtiketten=els.reduce((s,e)=>s+anz(e),0);
+  const nFotos=els.reduce((s,e)=>s+(e.fotos||[]).length,0);
   box.innerHTML=`
     <header class="obj-kopf"><div>
       <h1>${h(o.name)}</h1>
@@ -814,6 +880,8 @@ function renderObjekt(){
       <div class="block-kopf"><div><h2>Elemente <span class="zahl">${els.length}</span></h2><p>Zeile anklicken, um die Etikette zu sehen. Bei <b>M</b>, <b>D</b> und <b>P</b> pro Element den Montage-, Detail- und Produktionsplan hochladen (klicken oder PDF darauf ziehen).</p></div>
         <div class="block-aktionen">
           <button class="btn" data-act="druckAuswahl" id="btnAuswahl" ${S.auswahl.size?'':'disabled'}>Auswahl drucken (${S.auswahl.size})</button>
+          <button class="btn danger" data-act="loeschenAuswahl" id="btnLoeschen" ${S.auswahl.size?'':'disabled'}>Auswahl löschen (${S.auswahl.size})</button>
+          ${nFotos?`<button class="btn" data-galerie="objekt:${o.id}">Alle Fotos (${nFotos})</button>`:''}
           <button class="btn primary" data-act="druckAlle" ${els.length?'':'disabled'}>Alle Etiketten drucken (${nEtiketten})</button>
           <button class="btn" data-act="neuesElement">Element hinzufügen</button>
         </div></div>
@@ -829,6 +897,7 @@ function renderObjekt(){
 
 function updateAuswahlBtn(){
   const b=$('#btnAuswahl'); if(b){ b.disabled=!S.auswahl.size; b.textContent=`Auswahl drucken (${S.auswahl.size})`; }
+  const bl=$('#btnLoeschen'); if(bl){ bl.disabled=!S.auswahl.size; bl.textContent=`Auswahl löschen (${S.auswahl.size})`; }
   const all=$('[data-chk-all]'); const o=obj(S.aktivObjekt);
   if(all&&o){ const els=elementeVon(o.id); all.checked=els.length>0&&els.every(e=>S.auswahl.has(e.id)); }
 }
@@ -840,11 +909,11 @@ function renderVorschau(){
   let e=elem(S.aktivElement); if(e&&(!o||e.objektId!==o.id)) e=null;
   if(!e&&o){ e=elementeVon(o.id)[0]||null; S.aktivElement=e?e.id:null; }
   if(!e){ box.innerHTML=`<div class="vs-kopf"><h2 class="vs-titel">Etikette</h2></div><p class="leer">Sobald ein Element erfasst ist, erscheint hier die Etikette in Originalgrösse.</p>`; return; }
-  const link=linkFor(e);
+  const link=linkFor(e); const L=layout();
   box.innerHTML=`
-    <div class="vs-kopf"><h2 class="vs-titel">Etikette ${h(e.pos||e.barcode)}</h2><span class="vs-mass">10 × 10 cm, Massstab 1:1</span></div>
+    <div class="vs-kopf"><h2 class="vs-titel">Etikette ${h(e.pos||e.barcode)}</h2><span class="vs-mass">${L.breite} × ${L.hoehe} mm, Massstab 1:1</span></div>
     <div class="skala-rahmen" id="skalaRahmen"><div class="skala" id="skala"><div class="mass">
-      <div class="mass-h"><span>100 mm</span></div><div class="mass-v"><span>100 mm</span></div>${labelHTML(e)}
+      <div class="mass-h"><span>${L.breite} mm</span></div><div class="mass-v"><span>${L.hoehe} mm</span></div>${labelHTML(e)}
     </div></div></div>
     <div class="vs-link"><span>Der QR-Code öffnet diese Adresse</span><a class="link-text" href="${h(link)}">${h(link)}</a></div>
     ${istLokal()?`<p class="hinweis">Damit der QR-Code auf dem Handy funktioniert, die Seite über GitHub Pages öffnen oder in den Einstellungen die Online-Adresse eintragen.</p>`:''}
@@ -866,8 +935,9 @@ function renderVorschau(){
     const box2=$('#vsFotos'); box2.innerHTML=`<h3>Montagefotos (${(e.fotos||[]).length})</h3><p class="leer">Fotos werden geladen</p>`;
     Promise.all(fotos.map(f=>getFile(f.id))).then(files=>{
       if($('#vsFotos')!==box2||S.aktivElement!==e.id) return;
-      const imgs=files.filter(Boolean).map(d=>`<img src="${objUrl(new Blob([d.data],{type:d.type}))}" alt="Montagefoto">`).join('');
-      box2.innerHTML=`<h3>Montagefotos (${(e.fotos||[]).length})</h3><div class="thumbs">${imgs}</div>`;
+      const n=(e.fotos||[]).length;
+      const imgs=files.map((d,i)=>d?`<img src="${objUrl(new Blob([d.data],{type:d.type}))}" alt="Montagefoto" data-galerie="${e.id}" data-idx="${n-1-i}" title="Vergrössern">`:'').join('');
+      box2.innerHTML=`<h3>Montagefotos (${n}) <button class="btn sm ghost" data-galerie="${e.id}">Alle ansehen</button></h3><div class="thumbs">${imgs}</div>`;
     });
   }
 }
@@ -1092,7 +1162,9 @@ function fileToDataUrl(file){ return new Promise((res,rej)=>{ const r=new FileRe
 /* ---------- Löschen ---------- */
 function elementLoeschen(e){
   (e.fotos||[]).forEach(f=>delFile(f.id));
+  const plaene=Object.keys(ARTEN).map(a=>e[feldVon(a)]).filter(Boolean);
   entferne('elemente',e.id); S.auswahl.delete(e.id);
+  plaene.forEach(pid=>planFreigeben(pid,e.id));
 }
 function planLoeschenIntern(p){
   if(p.fileId) delFile(p.fileId);
@@ -1154,6 +1226,14 @@ const ACT={
   },
   druckEins(){ const e=elem(S.aktivElement); if(e) drucken([e]); },
   druckAlle(){ const o=obj(S.aktivObjekt); if(o) drucken(elementeVon(o.id)); },
+  async loeschenAuswahl(){
+    const o=obj(S.aktivObjekt); if(!o) return;
+    const els=elementeVon(o.id).filter(e=>S.auswahl.has(e.id)); if(!els.length) return;
+    const namen=els.slice(0,6).map(e=>[e.pos,e.bezeichnung].filter(Boolean).join(' ')||e.barcode).join(', ')+(els.length>6?` und ${els.length-6} weitere`:'');
+    if(!await bestaetigen(`${els.length} Element${els.length>1?'e':''} löschen?`,`${namen}. Die Etiketten, Pläne und Fotos dieser Elemente werden für alle Benutzer gelöscht.`)) return;
+    els.forEach(elementLoeschen); if(!elem(S.aktivElement)) S.aktivElement=null;
+    renderAll(); toast(`${els.length} Element${els.length>1?'e':''} gelöscht`);
+  },
   druckAuswahl(){ const o=obj(S.aktivObjekt); if(o) drucken(elementeVon(o.id).filter(e=>S.auswahl.has(e.id))); },
   linkKopieren(){
     const e=elem(S.aktivElement); if(!e) return; const l=linkFor(e);
@@ -1168,6 +1248,8 @@ const ACT={
       <div class="feld voll"><span>Firmenlogo auf der Etikette</span><div class="logo-vorschau">${logoMarkup()}</div>
         <input type="file" name="logoFile" accept="image/png,image/jpeg,image/svg+xml,image/webp">
         <label class="check"><input type="checkbox" name="logoReset" ${S.settings.logo?'':'disabled'}> Standardlogo verwenden</label></div>
+      ${feld('fotoCode','Code für Fotos (Monteure)',fotoCodeSoll(),{ph:'8852'})}
+      <p class="leer" style="align-self:end">Monteure geben den Code einmal pro Handy ein. Nach einer Änderung ist er auf allen Handys neu nötig.</p>
       <div class="feld voll"><span>Speicherort für Pläne und Fotos</span>
         <label class="check"><input type="checkbox" name="speicherStorage" ${S.settings.speicher==='storage'?'checked':''}> Firebase Storage verwenden</label>
         <p class="leer">Erst ankreuzen, wenn Blaze und Storage eingerichtet sind. Ohne Häkchen wird in der Datenbank gespeichert (Gratis-Tarif, für Tests). Bereits hochgeladene Dateien bleiben in beiden Fällen lesbar.</p></div>
@@ -1176,11 +1258,35 @@ const ACT={
     const r=await dialog('Einstellungen',body); if(!r) return;
     const url=String(r.data.baseUrl||'').trim().split('#')[0];
     const f={baseUrl:url||'',speicher:r.data.speicherStorage?'storage':'firestore'};
+    const code=String(r.data.fotoCode||'').trim(); if(code) f.fotoCode=code;
     const lf=r.form.querySelector('[name=logoFile]').files[0];
     if(r.data.logoReset) f.logo='';
     else if(lf){ if(lf.size>600*1024){ toast('Logo ist zu gross (max. 600 KB)'); } else f.logo=await fileToDataUrl(lf); }
     saveSettings(f); qrCache.clear(); applyLogo(); renderAll(); toast('Einstellungen gespeichert');
   },
+  // Etiketten-Layout mit Live-Vorschau. Testdruck druckt mit den eingestellten Werten, gespeichert wird erst mit «Speichern».
+  async layout(){
+    const l=layout(); const o=obj(S.aktivObjekt);
+    const e=elem(S.aktivElement)||(o&&elementeVon(o.id)[0])||S.elemente[0];
+    let gruppe='';
+    const felder=LAYOUT_FELDER.map(([g,k,t,min,max,step])=>{ const kopf=g!==gruppe?`<h3>${g}</h3>`:''; gruppe=g;
+      return kopf+`<label class="feld"><span>${t}${k==='schrift'?'':' (mm)'}</span><input type="number" name="${k}" value="${l[k]}" min="${min}" max="${max}" step="${step}" data-layout></label>`; }).join('');
+    const body=`<div class="lay"><div class="lay-felder">${felder}
+        <label class="check" style="grid-column:1/-1"><input type="checkbox" name="logo" ${l.logo?'checked':''} data-layout> Logo mitdrucken (nur für Etiketten ohne Vordruck)</label>
+        <p class="leer" style="grid-column:1/-1">Tipp: Erst einen Testdruck machen und auf eine vorgedruckte Etikette legen. Steht der Text zu hoch, «Oben» erhöhen. Ist er zu weit links, «Links» erhöhen.</p>
+        <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" data-act="layoutTestdruck" ${e?'':'disabled'}>Testdruck</button><button type="button" class="btn ghost" data-act="layoutStandard">Standardwerte</button></div>
+      </div><div class="lay-vorschau" id="layVorschau"></div></div>`;
+    const zeigen=()=>{ const v=$('#layVorschau'); if(!v) return; v.innerHTML=e?labelHTML(e):'<p class="leer">Noch keine Etikette vorhanden.</p>';
+      const et=$('.etikette',v); if(et){ const f=Math.min(1,300/et.offsetWidth); et.style.transform=`scale(${f})`; v.style.height=(et.offsetHeight*f+28)+'px'; v.style.width=(et.offsetWidth*f+28)+'px'; } };
+    layoutVorschau=()=>{ const f=$('#dlg form'); if(!f) return; const x=Object.fromEntries(new FormData(f)); x.logo=!!x.logo; applyLayout(x); zeigen(); };
+    const p=dialog('Etiketten-Layout',body,{breit:true}); setTimeout(zeigen,0);
+    const r=await p; layoutVorschau=null;
+    if(!r){ applyLayout(); renderVorschau(); return; }
+    const x=layout({...r.data,logo:!!r.data.logo});
+    saveSettings({layout:x}); applyLayout(); renderVorschau(); toast('Layout gespeichert');
+  },
+  layoutTestdruck(){ const o=obj(S.aktivObjekt); const e=elem(S.aktivElement)||(o&&elementeVon(o.id)[0])||S.elemente[0]; if(e) drucken([e],true); },
+  layoutStandard(){ const f=$('#dlg form'); if(!f) return; for(const [,k] of LAYOUT_FELDER) f.elements[k].value=LAYOUT_STD[k]; f.elements.logo.checked=LAYOUT_STD.logo; if(layoutVorschau) layoutVorschau(); },
   montiertMelden(){
     const e=elem(S.scanElement); if(!e) return;
     const inp=$('#monteurName'); const von=(inp&&inp.value||'').trim();
@@ -1241,10 +1347,10 @@ async function planLoeschen(p){
 }
 
 /* ---------- Druck ---------- */
-function drucken(els){
+function drucken(els,einmal=false){
   if(!els.length){ toast('Keine Etiketten ausgewählt'); return; }
-  // Jede Etikette so oft wie bei «Anzahl» eingestellt
-  const a=$('#print-area'); a.innerHTML=els.map(e=>{ const l=labelHTML(e); return l.repeat(anz(e)); }).join('');
+  // Jede Etikette so oft wie bei «Anzahl» eingestellt (Testdruck: einmal)
+  const a=$('#print-area'); a.innerHTML=els.map(e=>{ const l=labelHTML(e); return einmal?l:l.repeat(anz(e)); }).join('');
   const imgs=$$('img',a);
   Promise.all(imgs.map(i=>i.complete?1:new Promise(r=>{ i.onload=i.onerror=r; }))).then(()=>setTimeout(()=>window.print(),60));
 }
@@ -1319,10 +1425,12 @@ function renderScanElement(e){
       </div>
     </section>
     <section class="sc-block"><h2>Fotos vom montierten Element <span class="zahl">${(e.fotos||[]).length}</span></h2>
-      <div class="sc-zwei">
+      ${fotoFrei()?`<div class="sc-zwei">
         <label class="btn primary gross">Foto aufnehmen<input type="file" accept="image/*" capture="environment" hidden data-foto></label>
         <label class="btn gross">Aus Galerie<input type="file" accept="image/*" multiple hidden data-foto></label>
-      </div>
+      </div>`:`<form class="code-box" id="codeForm" autocomplete="off">
+        <label class="feld"><span>Code für Fotos</span><input id="fotoCode" type="password" inputmode="numeric" placeholder="Code eingeben" autocomplete="off"></label>
+        <button class="btn primary" type="submit">Freischalten</button></form>`}
       <div class="foto-raster" id="fotoRaster"></div>
     </section>
     <footer class="sc-fuss"><a href="#" data-act="zurVerwaltung">Zur Verwaltung</a></footer>
@@ -1412,7 +1520,7 @@ async function renderFotos(e){
     const d=await getFile(f.id); if(!d) return '';
     const u=objUrl(new Blob([d.data],{type:d.type||'image/jpeg'}));
     return `<figure class="foto"><a href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="Montagefoto ${h(e.pos)} vom ${fmtTs(f.ts)}" loading="lazy"></a>
-      <figcaption>${fmtTs(f.ts)}${f.von?`<br>${h(f.von)}`:''}</figcaption><button class="btn sm ghost danger" data-foto-del="${f.id}">Entfernen</button></figure>`;
+      <figcaption>${fmtTs(f.ts)}${f.von?`<br>${h(f.von)}`:''}</figcaption>${fotoFrei()?`<button class="btn sm ghost danger" data-foto-del="${f.id}">Entfernen</button>`:''}</figure>`;
   }));
   if($('#fotoRaster')===r) r.innerHTML=parts.join('')||'<p class="leer" style="grid-column:1/-1">Fotos konnten nicht geladen werden.</p>';
 }
@@ -1427,8 +1535,19 @@ async function komprimieren(file){
     return b||file;
   }catch(err){ return file; }
 }
+// Fotos nur mit Code (Einstellungen, Standard 8852). Einmal pro Gerät eingeben, ändert das Büro den Code, ist er neu nötig.
+// Hinweis: Das ist eine Hürde gegen Fremde mit dem Link, kein echter Schutz (der Code steht in der Datenbank).
+const fotoCodeSoll=()=>String(S.settings.fotoCode||'8852');
+const fotoFrei=()=>LS.get('fotoCode')===fotoCodeSoll();
+function fotoCodePruefen(){
+  const i=$('#fotoCode'); const v=(i&&i.value||'').trim();
+  if(v!==fotoCodeSoll()){ toast('Code falsch'); if(i){ i.value=''; i.focus(); } return; }
+  LS.set('fotoCode',v); toast('Freigeschaltet, jetzt Foto aufnehmen');
+  const e=elem(S.scanElement); if(e) renderScanElement(e);
+}
 async function fotosHinzufuegen(files){
   const e=elem(S.scanElement); if(!e||!files.length) return;
+  if(!fotoFrei()){ toast('Bitte zuerst den Code eingeben'); return; }
   const inp=$('#monteurName'); const von=(inp&&inp.value||'').trim();
   if(von) LS.set('monteur',von);
   toast('Fotos werden hochgeladen');
@@ -1455,6 +1574,54 @@ async function fotoLoeschen(fid){
   delFile(fid); renderScanElement(e);
 }
 
+
+/* ---------- Fotos ansehen: Galerie pro Element (oder ganzer Auftrag) und Grossansicht ---------- */
+const GAL_URLS=[]; const LB={bilder:[],i:0};
+const elName=e=>[e.pos,e.bezeichnung].filter(Boolean).join(' ')||e.barcode;
+async function galerieOeffnen(ziel,startIdx=null){
+  const objektweit=ziel.startsWith('objekt:');
+  const els=objektweit?elementeVon(ziel.slice(7)):[elem(ziel)].filter(Boolean);
+  const gruppen=els.map(e=>({e,fotos:(e.fotos||[]).slice().sort((a,b)=>(a.ts||0)-(b.ts||0))})).filter(g=>g.fotos.length);
+  if(!gruppen.length){ toast('Noch keine Fotos'); return; }
+  LB.bilder=[];
+  gruppen.forEach(g=>g.fotos.forEach(f=>LB.bilder.push({e:g.e,f,url:null})));
+  const titel=objektweit?`Fotos ${(obj(ziel.slice(7))||{}).name||''}`:`Fotos ${elName(gruppen[0].e)}`;
+  let k=0;
+  const html=`<div class="galerie">${gruppen.map(g=>`<h3>${h(elName(g.e))} <small class="leer">${h(g.e.gewerk||'')} · ${g.fotos.length} Foto${g.fotos.length>1?'s':''}</small></h3>
+    <div class="gal-raster">${g.fotos.map(()=>{ const i=k++; return `<button type="button" data-lb="${i}" title="Vergrössern"><img data-gal="${i}" alt=""></button>`; }).join('')}</div>`).join('')}</div>`;
+  const p=dialog(titel,html,{ok:'Schliessen',breit:true,info:true});
+  // Bilder nachladen (erst aus dem Cache, sonst aus der Datenbank)
+  const liste=LB.bilder;
+  liste.forEach((b,i)=>getFile(b.f.id).then(d=>{
+    if(!d||LB.bilder!==liste) return;
+    b.url=galUrl(new Blob([d.data],{type:d.type||'image/jpeg'}));
+    const img=$(`#dlg [data-gal="${i}"]`); if(img) img.src=b.url;
+    if($('#lb').open&&LB.i===i) lbZeigen(i);
+  }));
+  if(startIdx!=null){ const e=gruppen[0].e; const f=(e.fotos||[])[startIdx]; const idx=LB.bilder.findIndex(b=>b.f===f); lbZeigen(idx<0?0:idx); }
+  await p;
+  if($('#lb').open) $('#lb').close();
+  GAL_URLS.splice(0).forEach(u=>URL.revokeObjectURL(u)); LB.bilder=[];
+}
+function galUrl(blob){ const u=URL.createObjectURL(blob); GAL_URLS.push(u); return u; }
+function lbZeigen(i){
+  const n=LB.bilder.length; if(!n) return;
+  LB.i=(i+n)%n; const b=LB.bilder[LB.i]; const d=$('#lb');
+  const name=elName(b.e); const datei=name.replace(/[^A-Za-z0-9.-]+/g,'_')+'_'+(LB.i+1)+'.jpg';
+  d.innerHTML=`<div class="lb">
+    <div class="lb-kopf"><strong>${h(name)}</strong><span>${LB.i+1} / ${n}</span><span class="spacer"></span>
+      ${b.url?`<a class="btn sm" href="${b.url}" download="${h(datei)}">Herunterladen</a>`:''}<button type="button" class="btn sm" data-lb-zu>Schliessen</button></div>
+    <div class="lb-bild">${b.url?`<img src="${b.url}" alt="Montagefoto ${h(name)}">`:'<p>Foto wird geladen …</p>'}</div>
+    <div class="lb-fuss">${b.f.ts?fmtTs(b.f.ts):''}${b.f.von?` · ${h(b.f.von)}`:''}</div>
+    ${n>1?`<button type="button" class="lb-nav l" data-lb-nav="-1" aria-label="Vorheriges Foto">‹</button><button type="button" class="lb-nav r" data-lb-nav="1" aria-label="Nächstes Foto">›</button>`:''}
+  </div>`;
+  if(!d.open) d.showModal();
+}
+document.addEventListener('keydown',ev=>{
+  if(!$('#lb').open) return;
+  if(ev.key==='ArrowRight'){ ev.preventDefault(); lbZeigen(LB.i+1); }
+  if(ev.key==='ArrowLeft'){ ev.preventDefault(); lbZeigen(LB.i-1); }
+});
 
 /* ---------- Produktion: Barcode scannen, Produktionsplan anzeigen ---------- */
 // Der Handscanner tippt die Nummer ins Feld und drückt Enter. Der Plan erscheint in der Seite, das Feld ist sofort wieder bereit.
@@ -1519,6 +1686,10 @@ document.addEventListener('click',ev=>{
   if((b=t.closest('[data-plan-edit]'))){ const p=plan(b.dataset.planEdit); if(p) planLink(p); return; }
   if((b=t.closest('[data-plan-del]'))){ const p=plan(b.dataset.planDel); if(p) planLoeschen(p); return; }
   if((b=t.closest('[data-foto-del]'))){ fotoLoeschen(b.dataset.fotoDel); return; }
+  if((b=t.closest('[data-galerie]'))){ galerieOeffnen(b.dataset.galerie,b.dataset.idx!=null?Number(b.dataset.idx):null); return; }
+  if((b=t.closest('[data-lb]'))){ lbZeigen(Number(b.dataset.lb)); return; }
+  if((b=t.closest('[data-lb-nav]'))){ lbZeigen(LB.i+Number(b.dataset.lbNav)); return; }
+  if(t.closest('[data-lb-zu]')){ $('#lb').close(); return; }
   const row=t.closest('[data-row]');
   if(row&&!t.closest('button,input,a,label')) zeileWaehlen(row);
 });
@@ -1530,6 +1701,7 @@ document.addEventListener('keydown',ev=>{
 });
 document.addEventListener('submit',ev=>{
   if(ev.target.id==='pdForm'){ ev.preventDefault(); pdZeigen($('#pdNr').value); }
+  if(ev.target.id==='codeForm'){ ev.preventDefault(); fotoCodePruefen(); }
 });
 // PDF auf M, D oder P ziehen; Excel irgendwo ins Fenster ziehen
 const zielZelle=ev=>ev.target.closest&&ev.target.closest('[data-pz]');
@@ -1557,7 +1729,10 @@ function zeileWaehlen(row){
   renderVorschau();
   if(matchMedia('(max-width:1320px)').matches) $('#vorschau').scrollIntoView({behavior:'smooth',block:'start'});
 }
-document.addEventListener('input',ev=>{ if(ev.target.id==='monteurName') LS.set('monteur',ev.target.value.trim()); });
+document.addEventListener('input',ev=>{
+  if(ev.target.id==='monteurName') LS.set('monteur',ev.target.value.trim());
+  if(ev.target.matches('[data-layout]')&&layoutVorschau) layoutVorschau();
+});
 document.addEventListener('change',async ev=>{
   const t=ev.target;
   if(t.matches('[data-upload]')){
@@ -1606,7 +1781,7 @@ window.addEventListener('resize',debounce(fitSkala,120));
 
 /* ---------- Start ---------- */
 async function init(){
-  route();
+  applyLayout(); route();
   await DB.open();
   const auth=getAuth(fbApp);
   let gestartet=false;
