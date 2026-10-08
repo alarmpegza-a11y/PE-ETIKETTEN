@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   --blau:#24528F; --blau-tief:#173A68; --blau-hell:#E3EBF5;
@@ -66,6 +67,7 @@ a{color:var(--blau)}
 .seite{background:var(--papier);border-right:1px solid var(--linie);padding:18px 14px}
 .seite-kopf{display:flex;align-items:center;justify-content:space-between;margin:0 4px 12px}
 .seite-kopf h2{font-size:15px;font-weight:700}
+.seite-akt{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .obj-item{display:grid;grid-template-columns:1fr auto;gap:2px 8px;width:100%;text-align:left;background:none;border:0;border-left:3px solid transparent;padding:10px 10px 10px 11px;border-radius:0 6px 6px 0;cursor:pointer}
 .obj-item:hover{background:var(--beton)}
 .obj-item.aktiv{background:var(--blau-hell);border-left-color:var(--blau)}
@@ -91,7 +93,10 @@ main{padding:26px 30px 60px;min-width:0}
 .zahl{display:inline-block;font-size:13px;font-weight:700;color:var(--stahl);background:var(--papier);border:1px solid var(--linie);border-radius:10px;padding:0 8px;vertical-align:3px;margin-left:4px}
 
 /* Pläne */
-.plan-spalten{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.plan-spalten{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:14px}
+.plan-upload{display:flex;gap:8px;flex-wrap:wrap}
+.plan-alle{margin-top:14px}
+.plan-alle summary{cursor:pointer;font-weight:600;color:var(--blau);font-size:14px}
 .plan-spalte{background:var(--papier);border:1px solid var(--linie);border-radius:8px;padding:14px 14px 8px}
 .plan-titel{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .plan-titel h3{font-size:15px;font-weight:700}
@@ -121,6 +126,28 @@ main{padding:26px 30px 60px;min-width:0}
 .plan-tag{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:4px;font-size:11px;font-weight:800;margin-right:4px}
 .plan-tag.ok{background:var(--blau);color:#fff}
 .plan-tag.fehlt{border:1.5px dashed #AEB6BF;color:#AEB6BF}
+.pz{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:5px;font-size:12px;font-weight:800;margin-right:4px;cursor:pointer;border:1.5px dashed #AEB6BF;color:#8C96A1;background:#fff}
+.pz:hover,.pz.drop{border-color:var(--blau);color:var(--blau);background:var(--blau-hell)}
+.pz.ok{background:var(--blau);border:1.5px solid var(--blau);color:#fff}
+.pz.laedt{background:var(--amber-hell);border:1.5px solid var(--signal);color:var(--amber)}
+.pz.kaputt{background:#FBE9E8;color:var(--rot);border:1.5px solid var(--rot)}
+.anz{width:58px;border:1px solid var(--linie);border-radius:6px;padding:.3em .4em;text-align:center}
+.c-ba{font-variant-numeric:tabular-nums;white-space:nowrap}
+.el-tab td:nth-child(3){min-width:210px}
+.vs-plaene{margin-top:18px}
+.vs-plaene h3{font-size:14px;font-weight:700;margin-bottom:6px}
+.vs-plan{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--linie);font-size:13px}
+.vs-plan strong{flex:none;width:96px}
+.vs-plan span{flex:1;min-width:0;overflow-wrap:anywhere;color:var(--stahl)}
+.zu-tab{width:100%;border-collapse:collapse;font-size:13px}
+.zu-tab th{text-align:left;color:var(--stahl);font-weight:600;padding:6px;border-bottom:1px solid var(--linie)}
+.zu-tab td{padding:6px;border-bottom:1px solid var(--beton);vertical-align:middle}
+.zu-tab td:first-child{overflow-wrap:anywhere;max-width:340px}
+.zu-tab select{width:100%;border:1px solid var(--linie);border-radius:6px;padding:.35em .5em;background:#fff}
+.zu-ok{color:var(--gruen);font-weight:700}
+.zu-pruefen{color:var(--amber);font-weight:700}
+.zu-nein{color:var(--rot);font-weight:700}
+dialog.breit{width:min(1000px,calc(100vw - 24px))}
 .chip{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:10px;white-space:nowrap}
 .st-geplant{background:var(--beton);color:var(--stahl)}
 .st-produziert{background:var(--blau-hell);color:var(--blau)}
@@ -168,8 +195,9 @@ main{padding:26px 30px 60px;min-width:0}
 .et-lief b{font-size:10.5pt}
 .et-elem{font-weight:700;font-size:11.5pt;margin-top:1.4mm;line-height:1.18}
 .et-gewerk{font-weight:700;font-size:10.5pt;margin-top:.8mm;line-height:1.18}
-.et-bar{grid-column:1;grid-row:2;height:10mm;margin-top:2mm}
-.et-bar svg{display:block;width:100%;height:100%}
+.et-bar{grid-column:1;grid-row:2;margin-top:2mm;width:46mm}
+.et-bar svg{display:block;width:100%;height:8mm}
+.et-bar-nr{font-size:8pt;letter-spacing:.06em;text-align:center;margin-top:.4mm;font-variant-numeric:tabular-nums}
 .et-qr{grid-column:2;grid-row:1/3;align-self:end;text-align:center}
 .et-qr img,.qr-fehlt{display:block;width:29mm;height:29mm}
 .qr-fehlt{border:1px dashed #999;display:grid;place-items:center;font-size:8pt;color:#666}
@@ -225,6 +253,25 @@ dialog::backdrop{background:rgba(18,30,45,.45)}
 /* Toast */
 #toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--tinte);color:#fff;padding:10px 16px;border-radius:8px;font-weight:600;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:50;max-width:calc(100vw - 32px)}
 #toast.an{opacity:1;transform:translate(-50%,0)}
+
+/* Produktion: Barcode scannen, Produktionsplan anzeigen */
+body.modus-prod #admin,body.modus-prod #scan{display:none}
+body:not(.modus-prod) #produktion{display:none}
+.pd{display:flex;flex-direction:column;height:100vh}
+.pd-kopf{display:flex;align-items:center;gap:18px;background:#fff;border-bottom:1px solid var(--linie);padding:10px 20px}
+.pd-kopf .tb-logo{width:150px}
+.pd-kopf h1{font-size:18px;font-weight:700;flex:1}
+.pd-form{display:flex;gap:10px;padding:14px 20px;background:var(--blau)}
+.pd-form input{flex:1;max-width:520px;font-size:24px;font-weight:700;letter-spacing:.04em;padding:.35em .6em;border:3px solid #fff;border-radius:8px;font-variant-numeric:tabular-nums}
+.pd-form input:focus{outline:4px solid var(--signal);outline-offset:0}
+.pd-form .btn{font-size:16px;padding:.6em 1.2em}
+.pd-info{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:10px 20px;background:#fff;border-bottom:1px solid var(--linie);min-height:52px}
+.pd-info .gross{font-size:18px;font-weight:800}
+.pd-info .fehler{color:var(--rot);font-weight:700}
+.pd-info .spacer{flex:1}
+.pd-pdf{flex:1;min-height:0;border:0;width:100%;background:var(--tisch)}
+.pd-leer{flex:1;display:grid;place-items:center;color:var(--stahl);font-size:16px;text-align:center;padding:20px}
+.pd [hidden]{display:none!important}
 
 /* Monteur-Ansicht */
 body.modus-scan #admin{display:none}
@@ -317,14 +364,14 @@ body.modus-scan{background:var(--beton)}
     </div>
     <div class="tb-rechts">
       <span class="sync"></span>
+      <a class="btn" href="#produktion">Produktion scannen</a>
       <button class="btn ghost" data-act="einstellungen">Einstellungen</button>
-      <button class="btn ghost" data-act="reset">Demo zurücksetzen</button>
     </div>
   </header>
   <div id="intro"></div>
   <div class="app">
     <aside class="seite">
-      <div class="seite-kopf"><h2>Objekte</h2><button class="btn sm primary" data-act="neuesObjekt">Neues Objekt</button></div>
+      <div class="seite-kopf"><h2>Objekte</h2><span class="seite-akt"><label class="btn sm primary">Excel importieren<input type="file" accept=".xlsx,.xls,.csv" hidden data-excel></label><button class="btn sm" data-act="neuesObjekt">Neues Objekt</button></span></div>
       <nav id="objektListe" aria-label="Objekte"></nav>
     </aside>
     <main id="objektBereich"><p class="leer">Verbindung zur Datenbank wird aufgebaut</p></main>
@@ -333,6 +380,7 @@ body.modus-scan{background:var(--beton)}
 </div>
 
 <div id="scan"></div>
+<div id="produktion"></div>
 <div id="print-area"></div>
 <dialog id="dlg"></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -352,6 +400,7 @@ body.modus-scan{background:var(--beton)}
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getStorage, ref as sRef, uploadBytesResumable, getBlob, deleteObject } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js';
 window.__peStart=true;
 
 /* ---------- Firebase ---------- */
@@ -368,6 +417,7 @@ let fs;
 try{ fs=initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})}); }
 catch(err){ console.warn('Offline-Cache nicht verfügbar:',err); fs=getFirestore(fbApp); }
 const ref=(c,id)=>doc(fs,c,id);
+const st=getStorage(fbApp);
 
 /* ---------- Helfer ---------- */
 const $=(s,r=document)=>r.querySelector(s);
@@ -378,7 +428,8 @@ const fmt=d=>{ if(!d) return '–'; const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(d); 
 const fmtTs=ts=>new Date(ts).toLocaleString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
 const kb=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
 const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
-const byPos=(a,b)=>String(a.pos||'').localeCompare(String(b.pos||''),'de',{numeric:true});
+// Reihenfolge wie im Enventa-Auftrag (Positions-Nr.), sonst nach Position
+const byPos=(a,b)=>(Number(a.fixpos)||1e9)-(Number(b.fixpos)||1e9)||String(a.pos||'').localeCompare(String(b.pos||''),'de',{numeric:true});
 const plain=o=>JSON.parse(JSON.stringify(o));
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('an'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('an'),2800); }
 function clean(d){ const o={}; for(const [k,v] of Object.entries(d)) if(typeof v==='string') o[k]=v.trim(); return o; }
@@ -406,17 +457,31 @@ const DB={
   del(id){ if(!this.db){ this.mem.delete(id); return Promise.resolve(); } return this.req('readwrite',s=>s.delete(id)); }
 };
 
-/* ---------- Dateien in Firestore (in Teile zerlegt, max. 600 KB pro Dokument) ---------- */
+/* ---------- Dateien ----------
+   Zwei Speicherorte, umschaltbar in den Einstellungen (settings.speicher):
+   - 'firestore' (Standard, Gratis-Tarif): base64-Teile zu 600 KB in dateien/{id}/teile, ID ohne "/"
+   - 'storage' (nach Einrichtung von Blaze + Storage): Firebase Storage, die ID ist der Pfad (enthält "/")
+   Gelesen werden immer beide. */
+const istPfad=id=>String(id).includes('/');
 const TEIL=600*1024;
 function bytesToB64(u){ let s=''; for(let i=0;i<u.length;i+=0x8000) s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000)); return btoa(s); }
 function b64ToBytes(b){ const s=atob(b); const u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; }
-function putFile(name,type,buf){
+function putFile(path,name,type,buf){
+  if(S.settings.speicher!=='storage') return putFileFirestore(name,type,buf);
+  DB.put({id:path,name,type,data:buf}).catch(()=>{});
+  const task=uploadBytesResumable(sRef(st,path),new Uint8Array(buf),{contentType:type,customMetadata:{name}});
+  const done=new Promise((res,rej)=>task.on('state_changed',null,rej,()=>res()));
+  fire(done);
+  offeneUploads++; const fertig=()=>{ offeneUploads--; }; done.then(fertig,fertig);
+  return {id:path,done};
+}
+function putFileFirestore(name,type,buf){
   const id=uid(); const u=new Uint8Array(buf); const n=Math.max(1,Math.ceil(u.length/TEIL)); const ps=[];
   for(let i=0;i<n;i++) ps.push(setDoc(doc(fs,'dateien',id,'teile',String(i)),{d:bytesToB64(u.subarray(i*TEIL,(i+1)*TEIL))}));
   ps.push(setDoc(ref('dateien',id),{name,type,size:u.length,chunks:n,created:Date.now()}));
   DB.put({id,name,type,data:buf}).catch(()=>{});
   const done=Promise.all(ps); fire(done);
-  offeneUploads++; done.finally(()=>{ offeneUploads--; });
+  offeneUploads++; const fertig=()=>{ offeneUploads--; }; done.then(fertig,fertig);
   return {id,done};
 }
 const ladeLaeuft=new Map();
@@ -430,6 +495,12 @@ function getFile(id){
   if(ladeLaeuft.has(id)) return ladeLaeuft.get(id);
   const p=(async()=>{
     const c=await DB.get(id).catch(()=>null); if(c) return c;
+    if(istPfad(id)){
+      try{
+        const b=await mitTimeout(getBlob(sRef(st,id)),180000);
+        const f={id,name:id.split('/').pop(),type:b.type,data:await b.arrayBuffer()}; DB.put(f).catch(()=>{}); return f;
+      }catch(err){ console.warn('Datei nicht ladbar',id,err); DATEI_FEHLER.set(id,err&&err.code==='storage/object-not-found'?'fehlt':'netz'); return null; }
+    }
     try{
       const m=await mitTimeout(getDoc(ref('dateien',id)),45000); if(!m.exists()){ DATEI_FEHLER.set(id,'fehlt'); return null; }
       const md=m.data(); const n=md.chunks||1; let fertig=0;
@@ -446,6 +517,7 @@ function getFile(id){
 }
 async function delFile(id){
   if(!id) return; DB.del(id).catch(()=>{});
+  if(istPfad(id)){ deleteObject(sRef(st,id)).catch(err=>{ if(err.code!=='storage/object-not-found') console.warn('Löschen fehlgeschlagen',id,err); }); return; }
   let n=1; try{ const m=await getDoc(ref('dateien',id)); if(m.exists()) n=m.data().chunks||1; }catch(e){}
   fire(deleteDoc(ref('dateien',id)));
   for(let i=0;i<n;i++) fire(deleteDoc(doc(fs,'dateien',id,'teile',String(i))));
@@ -467,11 +539,40 @@ function patch(coll,id,fields){ const x=S[coll].find(y=>y.id===id); if(x) Object
 function entferne(coll,id){ S[coll]=S[coll].filter(x=>x.id!==id); fire(deleteDoc(ref(coll,id))); }
 function saveSettings(fields){ Object.assign(S.settings,fields); fire(setDoc(ref('settings','app'),plain(fields),{merge:true})); }
 
+/* ---------- Enventa: Auftragsnr. + Position ergeben feste IDs ---------- */
+// "NZ 41.03" und "nz41.03" ergeben denselben Schlüssel, damit Etikette und Dateiname zusammenpassen.
+const schluessel=x=>String(x||'').trim().toUpperCase().replace(/[^A-Z0-9.-]/g,'');
+const objektIdFuer=a=>'a_'+schluessel(a);
+const elementIdFuer=(a,p)=>objektIdFuer(a)+'_'+schluessel(p);
+const elemVorgabe=()=>({bezeichnung:'',gewerk:'',geschoss:'',lieferdatum:'',barcode:'',montagePlanId:'',detailPlanId:'',produktionPlanId:'',anzahl:1,status:'geplant',fotos:[],montiert:null});
+// Nur die bekannten Felder mit merge schreiben: Ist der lokale Cache veraltet und das Dokument existiert schon, gehen Pläne, Status und Fotos nicht verloren.
+function anlegen(coll,x,vorgabe){ upsert(S[coll],{...vorgabe,...x}); fire(setDoc(ref(coll,x.id),plain(x),{merge:true})); }
+function findeObjekt(a){ const k=schluessel(a); return obj(objektIdFuer(a))||S.objekte.find(o=>schluessel(o.auftragNr)===k)||null; }
+function findeEnventa(a,p){
+  const e=elem(elementIdFuer(a,p)); if(e) return e;
+  const ka=schluessel(a), kp=schluessel(p);
+  const os=new Set(S.objekte.filter(o=>schluessel(o.auftragNr)===ka).map(o=>o.id));
+  return S.elemente.find(x=>os.has(x.objektId)&&schluessel(x.pos)===kp)||null;
+}
+function enventaObjekt(a,x={}){
+  const vorh=findeObjekt(a); if(vorh) return vorh;
+  const o={id:objektIdFuer(a),name:String(x.o||'').trim()||'Auftrag '+a.trim(),auftragNr:a.trim(),created:Date.now()};
+  if(x.k) o.kunde=String(x.k).trim();
+  anlegen('objekte',o,{kunde:'',strasse:'',plzOrt:'',lieferdatum:''});
+  return obj(o.id);
+}
+function enventaElement(a,p,x={},o=null,felder={}){
+  const vorh=findeEnventa(a,p); if(vorh) return vorh;
+  const ob=o||enventaObjekt(a,x);
+  const e={id:elementIdFuer(a,p),objektId:ob.id,pos:p.trim(),created:Date.now(),...felder};
+  for(const [k,f] of [['b','bezeichnung'],['g','gewerk'],['e','geschoss']]) if(x[k]) e[f]=String(x[k]).trim();
+  anlegen('elemente',e,elemVorgabe());
+  return elem(e.id);
+}
+
 /* ---------- Live-Synchronisation ---------- */
 const bereit={objekte:false,plaene:false,elemente:false,settings:false};
-const vomServer={objekte:false,settings:false};
 const meta={};
-let seedGeprueft=false;
 let zugriffFehler=false, authFehler=null, angemeldet=false;
 function syncStatus(){
   const m=Object.values(meta);
@@ -503,7 +604,6 @@ function starteListener(){
       meta[name]=snap.metadata; syncStatus();
       const geaendert=snap.docChanges().length>0;
       if(geaendert||!bereit[name]) S[name]=snap.docs.map(d=>({...d.data(),id:d.id}));
-      if(name==='objekte'&&!snap.metadata.fromCache){ vomServer.objekte=true; pruefeSeed(); }
       if(!bereit[name]){ bereit[name]=true; pruefeStart(); }
       else if(geaendert) planRender();
     },syncFehler));
@@ -511,15 +611,9 @@ function starteListener(){
   abmelden.push(onSnapshot(ref('settings','app'),{includeMetadataChanges:true},snap=>{
     meta.settings=snap.metadata; syncStatus();
     S.settings=snap.exists()?snap.data():{};
-    if(!snap.metadata.fromCache){ vomServer.settings=true; pruefeSeed(); }
     qrCache.clear(); applyLogo();
     if(!bereit.settings){ bereit.settings=true; pruefeStart(); } else planRender();
   },syncFehler));
-}
-function pruefeSeed(){
-  if(seedGeprueft||!vomServer.objekte||!vomServer.settings) return;
-  seedGeprueft=true;
-  if(!S.settings.seeded&&S.objekte.length===0){ seed(); planRender(); }
 }
 function pruefeStart(){
   if(S.gestartet||!Object.values(bereit).every(Boolean)) return;
@@ -528,6 +622,7 @@ function pruefeStart(){
 }
 const planRender=debounce(()=>{
   if(!S.gestartet) return;
+  if(document.body.classList.contains('modus-prod')){ syncStatus(); return; }
   if(document.body.classList.contains('modus-scan')){
     const e=elem(S.scanElement);
     if(!e){ route(); return; }
@@ -544,6 +639,13 @@ window.addEventListener('offline',syncStatus);
 
 /* ---------- Status ---------- */
 const STATUS={geplant:'Geplant',produziert:'Produziert',geliefert:'Geliefert',montiert:'Montiert'};
+/* Jedes Element hat drei eigene Pläne */
+const ARTEN={montage:'Montageplan',detail:'Detailplan',produktion:'Produktionsplan'};
+const MEHRZAHL={montage:'Montagepläne',detail:'Detailpläne',produktion:'Produktionspläne'};
+const KURZ={montage:'M',detail:'D',produktion:'P'};
+const feldVon=art=>art+'PlanId';
+const anz=e=>Math.max(1,Math.min(99,parseInt(e.anzahl,10)||1));
+const findeBA=nr=>{ const n=String(nr||'').trim(); return n?S.elemente.find(e=>String(e.barcode||'')===n)||elem('ba_'+n)||null:null; };
 const statusChip=s=>`<span class="chip st-${STATUS[s]?s:'geplant'}">${STATUS[s]||'Geplant'}</span>`;
 
 /* ---------- Logo ---------- */
@@ -563,13 +665,20 @@ function payloadFor(e){
   Object.keys(p).forEach(k=>{ if(p[k]==null||p[k]==='') delete p[k]; });
   return p;
 }
-const linkFor=e=>baseUrl()+'#e='+enc(payloadFor(e));
+// Kurzer Link mit dem Betriebsauftrag (= Barcode): #b=2026102735. Ältere Formate #a= und #e= bleiben lesbar.
+function hashFor(e){
+  const o=obj(e.objektId)||{};
+  if(e.barcode) return 'b='+encodeURIComponent(e.barcode);
+  if(schluessel(o.auftragNr)&&schluessel(e.pos)) return 'a='+encodeURIComponent(o.auftragNr)+'&p='+encodeURIComponent(e.pos)+(o.name?'&o='+encodeURIComponent(o.name):'');
+  return 'e='+enc(payloadFor(e));
+}
+const linkFor=e=>baseUrl()+'#'+hashFor(e);
 
 const qrCache=new Map();
 function qrData(text){
   if(qrCache.has(text)) return qrCache.get(text);
   if(typeof QRious==='undefined') return null;
-  try{ const d=new QRious({value:text,size:520,level:'L',padding:12,background:'#ffffff',foreground:'#000000'}).toDataURL('image/png'); qrCache.set(text,d); return d; }
+  try{ const d=new QRious({value:text,size:520,level:text.length<200?'M':'L',padding:12,background:'#ffffff',foreground:'#000000'}).toDataURL('image/png'); qrCache.set(text,d); return d; }
   catch(err){ console.warn('QR-Fehler',err); return null; }
 }
 function barcodeSvg(code){
@@ -600,7 +709,7 @@ function labelHTML(e){
         <div class="et-elem">${h(e.pos)} ${h(e.bezeichnung)}</div>
         ${e.gewerk?`<div class="et-gewerk">${h(e.gewerk)}</div>`:''}
       </div>
-      <div class="et-bar">${barcodeSvg(e.barcode)}</div>
+      <div class="et-bar">${barcodeSvg(e.barcode)}${e.barcode?`<div class="et-bar-nr">${h(e.barcode)}</div>`:''}</div>
       <div class="et-qr">${qr?`<img src="${qr}" alt="QR-Code ${h(e.pos)}">`:'<div class="qr-fehlt">QR offline</div>'}<span>Pläne und Fotos</span></div>
     </div>
   </div>`;
@@ -620,10 +729,10 @@ function renderIntro(){
   box.innerHTML=`<section class="intro"><div class="intro-in"><div class="intro-body">
     <h2>So funktioniert die Idee</h2>
     <ol>
-      <li><div><strong>Objekt anlegen</strong>Montage- und Detailpläne einmal als PDF hochladen.</div></li>
-      <li><div><strong>Elemente erfassen</strong>Position, Typ und Gewerk eintragen, Pläne zuweisen.</div></li>
-      <li><div><strong>Etiketten drucken</strong>10 × 10 cm mit Logo, Angaben, Barcode und QR-Code.</div></li>
-      <li><div><strong>Auf der Baustelle scannen</strong>Monteur sieht alle Angaben, lädt die Pläne und legt Fotos ab. Alles ist sofort im Büro sichtbar.</div></li>
+      <li><div><strong>Excel importieren</strong>In Enventa «Planung Betriebsaufträge» als Excel exportieren und hier importieren. Alle Etiketten sind sofort da.</div></li>
+      <li><div><strong>Etiketten drucken</strong>Anzahl pro Element einstellen, dann alle oder eine Auswahl drucken.</div></li>
+      <li><div><strong>Pläne hochladen</strong>Pro Element Montage-, Detail- und Produktionsplan, einzeln (M, D, P) oder alle auf einmal.</div></li>
+      <li><div><strong>Scannen</strong>Produktion: Barcode scannen, der Produktionsplan öffnet sich. Baustelle: QR-Code scannen, Montage melden, Fotos ablegen.</div></li>
     </ol></div>
     <button class="btn sm" data-act="introZu">Ausblenden</button></div></section>`;
 }
@@ -640,9 +749,9 @@ function renderObjektListe(){
 
 function planSpalte(art,titel,liste){
   return `<div class="plan-spalte">
-    <div class="plan-titel"><h3>${titel}</h3><label class="btn sm">PDF hochladen<input type="file" accept="application/pdf,.pdf" multiple hidden data-upload="${art}"></label></div>
+    <div class="plan-titel"><h3>${titel}</h3></div>
     ${liste.length?`<ul class="plan-liste">${liste.map(p=>{
-      const n=S.elemente.filter(e=>e.montagePlanId===p.id||e.detailPlanId===p.id).length;
+      const n=S.elemente.filter(e=>e[feldVon(p.art)]===p.id).length;
       const info=[p.fertig===false?'wird hochgeladen, Seite offen lassen':'',p.fileId?kb(p.size||0):'nur Online-Link', p.url&&p.fileId?'mit Online-Link':'', n?`${n} Element${n>1?'e':''}`:'nicht zugewiesen'].filter(Boolean).join(', ');
       return `<li><span class="pdf-ico" aria-hidden="true">PDF</span>
         <span class="plan-name" title="${h(p.name)}">${h(p.name)}<small>${h(info)}</small></span>
@@ -651,24 +760,27 @@ function planSpalte(art,titel,liste){
   </div>`;
 }
 
-function planTag(k,titel,id,p){
-  if(p) return `<span class="plan-tag ok" title="${titel}: ${h(p.name)}">${k}</span>`;
-  if(id) return `<span class="plan-tag kaputt" title="${titel} fehlt in der Datenbank, bitte neu hochladen">${k}</span>`;
-  return `<span class="plan-tag fehlt" title="Kein ${titel} zugewiesen">${k}</span>`;
+// Plan-Feld in der Tabelle: Klick lädt ein PDF hoch, man kann die Datei auch darauf ziehen
+function planZelle(e,art){
+  const id=e[feldVon(art)], p=plan(id), k=KURZ[art], t=ARTEN[art];
+  const cls=p?(p.fertig===false?'laedt':'ok'):(id?'kaputt':'');
+  const tip=p?`${t}: ${p.name}${p.fertig===false?' (wird hochgeladen)':''}. Klicken oder PDF darauf ziehen, um ihn zu ersetzen.`
+    :id?`${t} fehlt in der Datenbank. Klicken, um ihn neu hochzuladen.`:`Kein ${t}. Klicken oder PDF darauf ziehen.`;
+  return `<label class="pz ${cls}" data-pz="${e.id}|${art}" title="${h(tip)}">${k}<input type="file" accept="application/pdf,.pdf" hidden data-pz-file="${e.id}|${art}"></label>`;
 }
 function tabelle(els){
   const alle=els.length&&els.every(e=>S.auswahl.has(e.id));
   return `<div class="tab-wrap"><table class="el-tab">
     <thead><tr><th class="c-chk"><input type="checkbox" data-chk-all aria-label="Alle Elemente auswählen" ${alle?'checked':''}></th>
-      <th>Position</th><th>Element</th><th>Typ / Gewerk</th><th>Pläne</th><th>Status</th><th>Fotos</th><th class="c-akt"><span class="sr">Aktionen</span></th></tr></thead>
+      <th>Position</th><th>Element</th><th>Betriebsauftrag</th><th title="Montage-, Detail- und Produktionsplan">Pläne</th><th>Anzahl</th><th>Status</th><th>Fotos</th><th class="c-akt"><span class="sr">Aktionen</span></th></tr></thead>
     <tbody>${els.map(e=>{
-      const mp=plan(e.montagePlanId), dp=plan(e.detailPlanId);
       return `<tr data-row="${e.id}" tabindex="0" class="${e.id===S.aktivElement?'aktiv':''}">
-        <td class="c-chk"><input type="checkbox" data-chk="${e.id}" ${S.auswahl.has(e.id)?'checked':''} aria-label="${h(e.pos)} zum Drucken auswählen"></td>
-        <td class="c-pos">${h(e.pos)}</td>
-        <td>${h(e.bezeichnung)}${e.geschoss?`<small>${h(e.geschoss)}</small>`:''}</td>
-        <td>${h(e.gewerk)}</td>
-        <td class="c-plaene">${planTag('M','Montageplan',e.montagePlanId,mp)}${planTag('D','Detailplan',e.detailPlanId,dp)}</td>
+        <td class="c-chk"><input type="checkbox" data-chk="${e.id}" ${S.auswahl.has(e.id)?'checked':''} aria-label="${h(e.pos||e.barcode)} zum Drucken auswählen"></td>
+        <td class="c-pos">${h(e.pos)}${e.fixpos?`<small>Pos. ${h(e.fixpos)}</small>`:''}</td>
+        <td>${h(e.bezeichnung)}${e.gewerk?`<small>${h(e.gewerk)}</small>`:''}</td>
+        <td class="c-ba">${h(e.barcode)}</td>
+        <td class="c-plaene">${planZelle(e,'montage')}${planZelle(e,'detail')}${planZelle(e,'produktion')}</td>
+        <td><input class="anz" type="number" min="1" max="99" value="${anz(e)}" data-anz="${e.id}" aria-label="Anzahl Etiketten ${h(e.pos)}"></td>
         <td>${statusChip(e.status)}</td>
         <td>${(e.fotos||[]).length}</td>
         <td class="c-akt"><button class="btn sm ghost" data-el-edit="${e.id}">Bearbeiten</button><button class="btn sm ghost" data-el-scan="${e.id}">Monteur-Ansicht</button></td>
@@ -684,8 +796,9 @@ function renderObjekt(){
   }
   const els=elementeVon(o.id);
   const sortN=(a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true});
-  const mps=S.plaene.filter(p=>p.objektId===o.id&&p.art==='montage').sort(sortN);
-  const dps=S.plaene.filter(p=>p.objektId===o.id&&p.art==='detail').sort(sortN);
+  const von=art=>S.plaene.filter(p=>p.objektId===o.id&&p.art===art).sort(sortN);
+  const nPlaene=S.plaene.filter(p=>p.objektId===o.id).length;
+  const nEtiketten=els.reduce((s,e)=>s+anz(e),0);
   box.innerHTML=`
     <header class="obj-kopf"><div>
       <h1>${h(o.name)}</h1>
@@ -698,17 +811,19 @@ function renderObjekt(){
       <button class="btn" data-act="objektBearbeiten">Objekt bearbeiten</button>
     </header>
     <section class="block">
-      <div class="block-kopf"><div><h2>Pläne</h2><p>PDFs einmal pro Objekt hochladen und danach jedem Element zuweisen.</p></div></div>
-      <div class="plan-spalten">${planSpalte('montage','Montagepläne',mps)}${planSpalte('detail','Detailpläne',dps)}</div>
-    </section>
-    <section class="block">
-      <div class="block-kopf"><div><h2>Elemente <span class="zahl">${els.length}</span></h2><p>Zeile anklicken, um die Etikette zu sehen.</p></div>
+      <div class="block-kopf"><div><h2>Elemente <span class="zahl">${els.length}</span></h2><p>Zeile anklicken, um die Etikette zu sehen. Bei <b>M</b>, <b>D</b> und <b>P</b> pro Element den Montage-, Detail- und Produktionsplan hochladen (klicken oder PDF darauf ziehen).</p></div>
         <div class="block-aktionen">
           <button class="btn" data-act="druckAuswahl" id="btnAuswahl" ${S.auswahl.size?'':'disabled'}>Auswahl drucken (${S.auswahl.size})</button>
-          <button class="btn" data-act="druckAlle" ${els.length?'':'disabled'}>Alle Etiketten drucken</button>
-          <button class="btn primary" data-act="neuesElement">Element hinzufügen</button>
+          <button class="btn primary" data-act="druckAlle" ${els.length?'':'disabled'}>Alle Etiketten drucken (${nEtiketten})</button>
+          <button class="btn" data-act="neuesElement">Element hinzufügen</button>
         </div></div>
-      ${els.length?tabelle(els):`<div class="leer-gross"><h2>Noch keine Elemente</h2><p>Erfasse das erste Element, danach wird die Etikette mit QR-Code erzeugt.</p><button class="btn primary" data-act="neuesElement">Element hinzufügen</button></div>`}
+      ${els.length?tabelle(els):`<div class="leer-gross"><h2>Noch keine Elemente</h2><p>Excel aus Enventa importieren oder das erste Element von Hand erfassen.</p><label class="btn primary">Excel importieren<input type="file" accept=".xlsx,.xls,.csv" hidden data-excel></label> <button class="btn" data-act="neuesElement">Element hinzufügen</button></div>`}
+    </section>
+    <section class="block">
+      <div class="block-kopf"><div><h2>Viele Pläne auf einmal</h2><p>Mehrere PDFs wählen. Das Tool schlägt anhand der Nasszelle im Dateinamen (z. B. <b>C5.105.001 … (WC).pdf</b>) das Element vor, du prüfst und bestätigst.</p></div></div>
+      <div class="plan-upload">${Object.entries(MEHRZAHL).map(([art,t])=>`<label class="btn">${t} hochladen<input type="file" accept="application/pdf,.pdf" multiple hidden data-upload="${art}"></label>`).join('')}</div>
+      ${nPlaene?`<details class="plan-alle"><summary>Alle Pläne dieses Auftrags anzeigen (${nPlaene})</summary>
+        <div class="plan-spalten">${Object.entries(MEHRZAHL).map(([art,t])=>planSpalte(art,t,von(art))).join('')}</div></details>`:''}
     </section>`;
 }
 
@@ -727,17 +842,23 @@ function renderVorschau(){
   if(!e){ box.innerHTML=`<div class="vs-kopf"><h2 class="vs-titel">Etikette</h2></div><p class="leer">Sobald ein Element erfasst ist, erscheint hier die Etikette in Originalgrösse.</p>`; return; }
   const link=linkFor(e);
   box.innerHTML=`
-    <div class="vs-kopf"><h2 class="vs-titel">Etikette ${h(e.pos)}</h2><span class="vs-mass">10 × 10 cm, Massstab 1:1</span></div>
+    <div class="vs-kopf"><h2 class="vs-titel">Etikette ${h(e.pos||e.barcode)}</h2><span class="vs-mass">10 × 10 cm, Massstab 1:1</span></div>
     <div class="skala-rahmen" id="skalaRahmen"><div class="skala" id="skala"><div class="mass">
       <div class="mass-h"><span>100 mm</span></div><div class="mass-v"><span>100 mm</span></div>${labelHTML(e)}
     </div></div></div>
     <div class="vs-link"><span>Der QR-Code öffnet diese Adresse</span><a class="link-text" href="${h(link)}">${h(link)}</a></div>
     ${istLokal()?`<p class="hinweis">Damit der QR-Code auf dem Handy funktioniert, die Seite über GitHub Pages öffnen oder in den Einstellungen die Online-Adresse eintragen.</p>`:''}
     <div class="vs-aktionen">
-      <button class="btn primary" data-act="druckEins">Etikette drucken</button>
+      <button class="btn primary" data-act="druckEins">Etikette drucken${anz(e)>1?` (${anz(e)}×)`:''}</button>
       <button class="btn" data-el-scan="${e.id}">Monteur-Ansicht</button>
       <button class="btn" data-act="linkKopieren">Link kopieren</button>
     </div>
+    <div class="vs-plaene"><h3>Pläne dieses Elements</h3>${Object.keys(ARTEN).map(art=>{
+      const p=plan(e[feldVon(art)]);
+      return `<div class="vs-plan"><strong>${ARTEN[art]}</strong><span>${p?h(p.name)+(p.fertig===false?' (wird hochgeladen)':''):'fehlt'}</span>
+        ${p?`<button class="btn sm ghost" data-plan-dl="${p.id}">Herunterladen</button>`:''}
+        <label class="btn sm">${p?'Ersetzen':'Hochladen'}<input type="file" accept="application/pdf,.pdf" hidden data-pz-file="${e.id}|${art}"></label></div>`;
+    }).join('')}</div>
     <div class="vs-fotos" id="vsFotos"></div>`;
   fitSkala();
   const fotos=(e.fotos||[]).slice(-8).reverse();
@@ -759,12 +880,12 @@ function fitSkala(){
 }
 
 /* ---------- Dialoge ---------- */
-function dialog(title,bodyHTML,{ok='Speichern',danger=null}={}){
+function dialog(title,bodyHTML,{ok='Speichern',danger=null,breit=false,info=false}={}){
   return new Promise(res=>{
-    const d=$('#dlg');
+    const d=$('#dlg'); d.classList.toggle('breit',breit);
     d.innerHTML=`<form class="dlg-form" novalidate><h2>${h(title)}</h2><div class="dlg-body">${bodyHTML}</div>
       <div class="dlg-fuss">${danger?`<button type="button" class="btn danger" data-danger>${h(danger)}</button>`:''}<span class="spacer"></span>
-      <button type="button" class="btn" data-cancel>Abbrechen</button><button type="submit" class="btn primary">${h(ok)}</button></div></form>`;
+      <button type="button" class="btn" data-cancel ${info?'hidden':''}>Abbrechen</button><button type="submit" class="btn primary">${h(ok)}</button></div></form>`;
     const f=$('form',d); let done=false;
     const fin=v=>{ if(done) return; done=true; if(d.open) d.close(); res(v); };
     f.onsubmit=ev=>{ ev.preventDefault(); if(!f.reportValidity()) return; fin({action:'ok',data:Object.fromEntries(new FormData(f)),form:f}); };
@@ -790,29 +911,26 @@ function objektForm(o={}){
   </div>`;
 }
 function elementForm(e,o){
-  const opt=(art,sel)=>`<option value="">Kein Plan</option>`+S.plaene.filter(p=>p.objektId===o.id&&p.art===art)
-    .sort((a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true}))
-    .map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${h(p.name)}</option>`).join('');
   return `<div class="feld-gitter">
-    ${feld('pos','Position',e.pos,{required:true,ph:'z. B. NZ 41.03'})}
-    ${feld('bezeichnung','Bezeichnung',e.bezeichnung,{required:true,ph:'z. B. Dusche Attika'})}
-    ${feld('gewerk','Typ / Gewerk',e.gewerk,{ph:'z. B. Verrohrung Wasser',list:'gewerke'})}
-    ${feld('geschoss','Geschoss / Raum',e.geschoss,{ph:'z. B. Attika'})}
+    ${feld('pos','Position / Nasszelle',e.pos,{ph:'z. B. C5.105.001'})}
+    ${feld('bezeichnung','Bezeichnung',e.bezeichnung,{required:true,ph:'z. B. Typ 6.4.3, Bad Typ B6.G (WC)'})}
+    ${feld('gewerk','Element / Gewerk',e.gewerk,{ph:'z. B. Element Typ1.1 RH Vorwand WC'})}
+    ${feld('geschoss','Geschoss / Raum',e.geschoss,{ph:'z. B. 5. OG'})}
     ${feld('lieferdatum','Lieferdatum (leer = wie Objekt)',e.lieferdatum,{type:'date'})}
-    ${feld('barcode','Barcode-Nummer',e.barcode,{ph:'wird automatisch vergeben'})}
-    <label class="feld"><span>Montageplan</span><select name="montagePlanId">${opt('montage',e.montagePlanId)}</select></label>
-    <label class="feld"><span>Detailplan</span><select name="detailPlanId">${opt('detail',e.detailPlanId)}</select></label>
-    <label class="feld"><span>oder neuen Montageplan hochladen</span><input type="file" name="neuMontage" accept="application/pdf,.pdf"></label>
-    <label class="feld"><span>oder neuen Detailplan hochladen</span><input type="file" name="neuDetail" accept="application/pdf,.pdf"></label>
+    ${feld('barcode','Betriebsauftrag (Barcode)',e.barcode,{ph:'leer = wird automatisch vergeben'})}
+    ${feld('anzahl','Anzahl Etiketten',String(anz(e)),{type:'number'})}
+    ${Object.keys(ARTEN).map(art=>{ const p=plan(e[feldVon(art)]);
+      return `<label class="feld"><span>${ARTEN[art]}${p?`: ${h(p.name)}`:' (fehlt)'}</span><input type="file" name="neu_${art}" accept="application/pdf,.pdf"></label>`; }).join('')}
     <label class="feld"><span>Status</span><select name="status">${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${k===(e.status||'geplant')?'selected':''}>${v}</option>`).join('')}</select></label>
   </div>`;
 }
 const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 function planHochladen(file,art,objektId,buf){
-  const {id,done}=putFile(file.name,'application/pdf',buf);
-  const p={id:uid(),objektId,art,name:file.name,fileId:id,url:'',size:file.size,created:Date.now(),fertig:false};
-  savePlan(p); done.then(()=>patch('plaene',p.id,{fertig:true}),()=>{});
-  return {planId:p.id,done};
+  const id=uid();
+  const r=putFile(`plaene/${objektId}/${id}.pdf`,file.name,'application/pdf',buf);
+  const p={id,objektId,art,name:file.name,fileId:r.id,url:'',size:file.size,created:Date.now(),fertig:false};
+  savePlan(p); r.done.then(()=>patch('plaene',p.id,{fertig:true}),()=>{});
+  return {planId:p.id,done:r.done};
 }
 function pdfPruefen(f){
   if(!f) return false;
@@ -820,21 +938,148 @@ function pdfPruefen(f){
   if(f.size>25*1048576){ toast(`${f.name} ist grösser als 25 MB`); return false; }
   return true;
 }
-async function formPlaene(form,d,objektId){
+// Wird ein Plan ersetzt und braucht ihn kein anderes Element mehr, wird er gelöscht
+function planFreigeben(planId,ausser){
+  const p=plan(planId); if(!p) return;
+  if(!S.elemente.some(e=>e.id!==ausser&&Object.keys(ARTEN).some(a=>e[feldVon(a)]===planId))) planLoeschenIntern(p);
+}
+async function formPlaene(form,d,e){
   const laeufe=[];
-  for(const [feldName,art,ziel] of [['neuMontage','montage','montagePlanId'],['neuDetail','detail','detailPlanId']]){
-    const f=form.querySelector(`[name=${feldName}]`).files[0];
-    if(f&&pdfPruefen(f)){ const r=planHochladen(f,art,objektId,await f.arrayBuffer()); d[ziel]=r.planId; laeufe.push(r.done); }
+  for(const art of Object.keys(ARTEN)){
+    const inp=form.querySelector(`[name=neu_${art}]`); const f=inp&&inp.files[0];
+    if(f&&pdfPruefen(f)){
+      const alt=e[feldVon(art)];
+      const r=planHochladen(f,art,e.objektId,await f.arrayBuffer()); d[feldVon(art)]=r.planId; laeufe.push(r.done);
+      if(alt&&alt!==r.planId) setTimeout(()=>planFreigeben(alt,e.id),0);
+    }
   }
   if(laeufe.length){ toast('Plan wird hochgeladen'); Promise.all(laeufe).then(()=>toast('Plan hochgeladen und zugewiesen'),()=>{}); }
 }
-function autoZuweisen(planId,art,name,objektId){
-  const n=norm(name); const feldName=art==='montage'?'montagePlanId':'detailPlanId'; let z=0;
-  for(const e of S.elemente.filter(x=>x.objektId===objektId)){
-    const pn=norm(e.pos);
-    if(pn.length>=3&&n.includes(pn)&&!plan(e[feldName])){ patch('elemente',e.id,{[feldName]:planId}); z++; }
+// Ein PDF als Montage-, Detail- oder Produktionsplan eines Elements speichern (ersetzt den bisherigen)
+async function elementPlanSetzen(eid,art,file){
+  const e=elem(eid); if(!e||!ARTEN[art]||!pdfPruefen(file)) return null;
+  const alt=e[feldVon(art)];
+  const r=planHochladen(file,art,e.objektId,await file.arrayBuffer());
+  patch('elemente',e.id,{[feldVon(art)]:r.planId});
+  if(alt) planFreigeben(alt,e.id);
+  return r;
+}
+
+/* Viele Pläne auf einmal: Vorschlag über Nasszelle, Klammerteil und Betriebsauftrag im Dateinamen */
+function planVorschlag(name,els){
+  const fn=norm(String(name).replace(/\.pdf$/i,''));
+  const wert=e=>{
+    let s=0;
+    if(e.barcode&&fn.includes(norm(e.barcode))) s+=50;
+    const p=norm(e.pos);
+    if(p.length>=4&&fn.includes(p)){
+      s+=20;
+      const kl=/\(([^)]*)\)\s*$/.exec(e.bezeichnung||'');
+      if(kl){ const k=norm(kl[1]); if(k&&fn.includes(k)) s+=5+k.length; }
+      const typ=/Bad Typ\s*([A-Z0-9.]+)/i.exec(e.bezeichnung||'');
+      if(typ&&fn.includes(norm(typ[1]))) s+=2;
+    }
+    return s;
+  };
+  const r=els.map(e=>({e,s:wert(e)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s);
+  if(!r.length) return {e:null,sicher:false};
+  return {e:r[0].e,sicher:r.length===1||r[0].s>r[1].s};
+}
+async function massenUpload(files,art){
+  const o=obj(S.aktivObjekt); if(!o){ toast('Zuerst einen Auftrag wählen'); return; }
+  const pdfs=files.filter(pdfPruefen); if(!pdfs.length) return;
+  const els=elementeVon(o.id);
+  if(!els.length){ toast('Dieser Auftrag hat noch keine Elemente. Zuerst die Excel importieren.'); return; }
+  const vs=pdfs.map(f=>planVorschlag(f.name,els));
+  const opt=sel=>`<option value="">nicht zuordnen</option>`+els.map(e=>`<option value="${e.id}" ${sel&&sel.id===e.id?'selected':''}>${h([e.pos,e.bezeichnung].filter(Boolean).join(' ')||e.barcode)} · ${h(e.barcode)}</option>`).join('');
+  const zeilen=pdfs.map((f,i)=>{
+    const v=vs[i]; const ersetzt=v.e&&plan(v.e[feldVon(art)]);
+    const st=!v.e?'<span class="zu-nein">kein Treffer</span>':v.sicher?'<span class="zu-ok">passt</span>':'<span class="zu-pruefen">bitte prüfen</span>';
+    return `<tr><td>${h(f.name)}${ersetzt?`<br><small class="leer">ersetzt ${h(ersetzt.name)}</small>`:''}</td><td><select name="f_${i}">${opt(v.e)}</select></td><td>${st}</td></tr>`;
+  }).join('');
+  const r=await dialog(`${MEHRZAHL[art]} zuordnen`,`<p class="leer">${pdfs.length} Datei${pdfs.length>1?'en':''}. Vorschläge prüfen und bei Bedarf ändern. Erst mit «Hochladen» wird gespeichert.</p>
+    <table class="zu-tab"><thead><tr><th>Datei</th><th>Element</th><th></th></tr></thead><tbody>${zeilen}</tbody></table>`,{ok:'Hochladen',breit:true});
+  if(!r) return;
+  const laeufe=[]; const doppelt=new Set();
+  for(let i=0;i<pdfs.length;i++){
+    const eid=r.data[`f_${i}`]; if(!eid) continue;
+    if(doppelt.has(eid)){ toast(`${pdfs[i].name}: Element wurde schon einer anderen Datei zugeordnet, übersprungen`); continue; }
+    doppelt.add(eid);
+    const x=await elementPlanSetzen(eid,art,pdfs[i]); if(x) laeufe.push(x.done);
   }
-  return z;
+  renderAll();
+  if(laeufe.length){ toast(`${laeufe.length} ${laeufe.length>1?MEHRZAHL[art]:ARTEN[art]} werden hochgeladen`); Promise.all(laeufe).then(()=>toast(`${laeufe.length} ${laeufe.length>1?MEHRZAHL[art]:ARTEN[art]} hochgeladen`),()=>{}); }
+}
+
+/* ---------- Excel-Import «Planung Betriebsaufträge» aus Enventa ---------- */
+function excelDatum(v){
+  if(v==null||v==='') return '';
+  if(typeof v==='number'&&v>20000) return new Date(Math.round((v-25569)*864e5)).toISOString().slice(0,10);
+  const m=/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/.exec(String(v).trim());
+  if(m){ const y=m[3].length===2?'20'+m[3]:m[3]; return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
+  return /^\d{4}-\d{2}-\d{2}/.test(String(v))?String(v).slice(0,10):'';
+}
+// "Kunden-Auftrag: …\nKunde: …\nProjekt: …\nPostext: \nC5.105.001, Typ 6.4.3, Bad Typ B6.G (WC)"
+function parseBeschreibung(txt){
+  const zeilen=String(txt||'').replace(/\r/g,'').split('\n'); const r={}; let post=null;
+  for(const z of zeilen){
+    if(post!==null){ if(z.trim()) post.push(z.trim()); continue; }
+    const m=/^\s*([^:]{2,30}):\s*(.*)$/.exec(z);
+    if(!m) continue;
+    const k=m[1].trim().toLowerCase();
+    if(k==='postext'){ post=m[2].trim()?[m[2].trim()]:[]; continue; }
+    r[k]=m[2].trim();
+  }
+  r.postext=(post||[]).join(' ');
+  return r;
+}
+function teilePostext(t){
+  const m=/^([A-Z]{0,3}\d+(?:\.\d+)+)\s*,?\s*(.*)$/i.exec(t||'');
+  return m?{pos:m[1],bezeichnung:m[2].trim()}:{pos:'',bezeichnung:(t||'').trim()};
+}
+async function importExcel(file){
+  if(typeof XLSX==='undefined'){ toast('Excel-Bibliothek nicht geladen. Internet prüfen und Seite neu laden.'); return; }
+  let rows;
+  try{
+    const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});
+    rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:''});
+  }catch(err){ console.error(err); toast('Die Datei konnte nicht gelesen werden'); return; }
+  const kopf=rows.findIndex(r=>r.some(c=>String(c).trim().toLowerCase()==='betriebsauftrag'));
+  if(kopf<0){ await dialog('Import nicht möglich','<p>In der Datei fehlt die Spalte «Betriebsauftrag». Bitte in Enventa die Liste «Planung Betriebsaufträge» exportieren.</p>',{ok:'OK',info:true}); return; }
+  const col={};
+  rows[kopf].forEach((c,i)=>{ const k=String(c).trim().toLowerCase(); if(k&&!(k in col)) col[k]=i; });
+  const w=(r,k)=>col[k]==null?'':r[col[k]];
+  const auftraege=new Map(); let neu=0, aktualisiert=0;
+  for(const r of rows.slice(kopf+1)){
+    const ba=String(w(r,'betriebsauftrag')).trim();
+    if(!/^\d{4,}$/.test(ba)) continue;
+    const b=parseBeschreibung(w(r,'beschreibung'));
+    const auftragNr=String(w(r,'dokument')||b['kunden-auftrag']||'').trim()||'ohne Auftrag';
+    const lief=excelDatum(w(r,'lieferdatum'));
+    if(!auftraege.has(auftragNr)){
+      const o={id:objektIdFuer(auftragNr),auftragNr,
+        name:String(w(r,'projektname')||b.projekt||'').trim()||'Auftrag '+auftragNr,
+        kunde:String(w(r,'firma 1')||b.kunde||'').trim()};
+      if(lief) o.lieferdatum=lief;
+      const vorh=obj(o.id);
+      if(!vorh) o.created=Date.now();
+      anlegen('objekte',o,vorh||{strasse:'',plzOrt:'',lieferdatum:''});
+      auftraege.set(auftragNr,{o:obj(o.id),n:0});
+    }
+    const a=auftraege.get(auftragNr); a.n++;
+    const t=teilePostext(b.postext);
+    const x={id:'ba_'+ba,objektId:a.o.id,barcode:ba,fixpos:String(w(r,'fixpos')||b['positions-nr']||'').trim(),
+      pos:t.pos,bezeichnung:t.bezeichnung||String(w(r,'bezeichnung')).trim(),gewerk:String(w(r,'bezeichnung')).trim(),
+      artikel:String(w(r,'artikel')).trim(),lieferdatum:lief};
+    const vorh=elem(x.id);
+    if(vorh) aktualisiert++; else { neu++; x.anzahl=Math.max(1,Math.round(Number(w(r,'menge bestellt'))||1)); x.created=Date.now(); }
+    anlegen('elemente',x,vorh||elemVorgabe());
+  }
+  if(!auftraege.size){ toast('Keine Zeilen mit Betriebsauftrag gefunden'); return; }
+  const erster=[...auftraege.values()][0].o;
+  S.aktivObjekt=erster.id; S.aktivElement=null; S.auswahl.clear(); renderAll();
+  const liste=[...auftraege.entries()].map(([nr,a])=>`<li><b>${h(a.o.name)}</b> (Auftrag ${h(nr)}): ${a.n} Element${a.n>1?'e':''}</li>`).join('');
+  dialog('Import abgeschlossen',`<ul>${liste}</ul><p>${neu} neu, ${aktualisiert} aktualisiert. Bestehende Pläne, Anzahl, Status und Fotos bleiben erhalten.</p>`,{ok:'OK',info:true});
 }
 function autoBarcode(o){
   const base=(o.auftragNr||'').replace(/\D/g,'')||String(Date.now()).slice(-6);
@@ -854,8 +1099,7 @@ function planLoeschenIntern(p){
   entferne('plaene',p.id);
   for(const e of S.elemente){
     const f={};
-    if(e.montagePlanId===p.id) f.montagePlanId='';
-    if(e.detailPlanId===p.id) f.detailPlanId='';
+    for(const art of Object.keys(ARTEN)) if(e[feldVon(art)]===p.id) f[feldVon(art)]='';
     if(Object.keys(f).length) patch('elemente',e.id,f);
   }
 }
@@ -868,9 +1112,22 @@ function objektLoeschen(o){
 /* ---------- Aktionen ---------- */
 const ACT={
   introZu(){ LS.set('introZu',true); renderIntro(); fitSkala(); },
+  async auftragOeffnen(){
+    const r=await dialog('Auftrag öffnen',`<p class="leer">Auftragsnummer wie in Enventa. Gibt es den Auftrag hier noch nicht, wird er angelegt.</p>
+      <div class="feld-gitter">${feld('auftragNr','Auftragsnummer','',{required:true,ph:'z. B. 26-0412'})}${feld('name','Objektbezeichnung (nur bei neuem Auftrag)','',{ph:'z. B. Feldblumenweg 15 17 Zürich'})}</div>`,{ok:'Öffnen'}); if(!r) return;
+    const a=String(r.data.auftragNr||'').trim();
+    if(!schluessel(a)){ toast('Bitte eine gültige Auftragsnummer eintragen'); return; }
+    const war=findeObjekt(a); const o=war||enventaObjekt(a,{o:r.data.name});
+    S.aktivObjekt=o.id; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast(war?'Auftrag geöffnet':'Auftrag angelegt');
+  },
   async neuesObjekt(){
     const r=await dialog('Neues Objekt',objektForm({}),{ok:'Objekt anlegen'}); if(!r) return;
-    const o={...clean(r.data),id:uid(),created:Date.now()};
+    const d=clean(r.data);
+    if(schluessel(d.auftragNr)){
+      const war=findeObjekt(d.auftragNr);
+      if(war){ S.aktivObjekt=war.id; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast(`Auftrag ${d.auftragNr} gibt es schon, er wurde geöffnet`); return; }
+    }
+    const o={...d,id:schluessel(d.auftragNr)?objektIdFuer(d.auftragNr):uid(),created:Date.now()};
     saveObj(o); S.aktivObjekt=o.id; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast('Objekt angelegt');
   },
   async objektBearbeiten(){
@@ -887,9 +1144,11 @@ const ACT={
   async neuesElement(){
     const o=obj(S.aktivObjekt); if(!o) return;
     const r=await dialog('Element hinzufügen',elementForm({status:'geplant'},o),{ok:'Element anlegen'}); if(!r) return;
-    const e={...clean(r.data),id:uid(),objektId:o.id,fotos:[],montiert:null,created:Date.now()};
-    await formPlaene(r.form,e,o.id);
-    if(!e.barcode) e.barcode=autoBarcode(o);
+    const d=clean(r.data);
+    if(d.barcode&&findeBA(d.barcode)){ toast(`Betriebsauftrag ${d.barcode} gibt es schon`); return; }
+    if(!d.barcode) d.barcode=autoBarcode(o);
+    const e={...elemVorgabe(),...d,id:'ba_'+schluessel(d.barcode),objektId:o.id,anzahl:anz(d),created:Date.now()};
+    await formPlaene(r.form,e,e);
     if(e.status==='montiert') e.montiert={am:Date.now(),von:'Büro'};
     saveElem(e); S.aktivElement=e.id; renderAll(); toast('Element angelegt');
   },
@@ -909,24 +1168,18 @@ const ACT={
       <div class="feld voll"><span>Firmenlogo auf der Etikette</span><div class="logo-vorschau">${logoMarkup()}</div>
         <input type="file" name="logoFile" accept="image/png,image/jpeg,image/svg+xml,image/webp">
         <label class="check"><input type="checkbox" name="logoReset" ${S.settings.logo?'':'disabled'}> Standardlogo verwenden</label></div>
+      <div class="feld voll"><span>Speicherort für Pläne und Fotos</span>
+        <label class="check"><input type="checkbox" name="speicherStorage" ${S.settings.speicher==='storage'?'checked':''}> Firebase Storage verwenden</label>
+        <p class="leer">Erst ankreuzen, wenn Blaze und Storage eingerichtet sind. Ohne Häkchen wird in der Datenbank gespeichert (Gratis-Tarif, für Tests). Bereits hochgeladene Dateien bleiben in beiden Fällen lesbar.</p></div>
       <p class="leer" style="grid-column:1/-1">Die Einstellungen gelten für alle Geräte.</p>
     </div>`;
     const r=await dialog('Einstellungen',body); if(!r) return;
     const url=String(r.data.baseUrl||'').trim().split('#')[0];
-    const f={baseUrl:url||''};
+    const f={baseUrl:url||'',speicher:r.data.speicherStorage?'storage':'firestore'};
     const lf=r.form.querySelector('[name=logoFile]').files[0];
     if(r.data.logoReset) f.logo='';
     else if(lf){ if(lf.size>600*1024){ toast('Logo ist zu gross (max. 600 KB)'); } else f.logo=await fileToDataUrl(lf); }
     saveSettings(f); qrCache.clear(); applyLogo(); renderAll(); toast('Einstellungen gespeichert');
-  },
-  async reset(){
-    if(!await bestaetigen('Demo zurücksetzen?','Achtung, die Datenbank ist live: Alle Objekte, Pläne und Fotos werden für alle Geräte gelöscht und die Beispieldaten neu geladen. Einstellungen bleiben erhalten.','Alles zurücksetzen')) return;
-    [...S.objekte].forEach(objektLoeschen);
-    [...S.plaene].forEach(planLoeschenIntern);
-    [...S.elemente].forEach(elementLoeschen);
-    seed();
-    S.aktivObjekt=ersteObjektId(); S.aktivElement=null; S.auswahl.clear(); qrCache.clear();
-    renderAll(); toast('Beispieldaten geladen');
   },
   montiertMelden(){
     const e=elem(S.scanElement); if(!e) return;
@@ -953,8 +1206,10 @@ async function elementBearbeiten(id){
     elementLoeschen(e); if(S.aktivElement===e.id) S.aktivElement=null; renderAll(); toast('Element gelöscht'); return;
   }
   const d=clean(r.data);
-  await formPlaene(r.form,d,e.objektId);
+  if(d.barcode&&d.barcode!==e.barcode&&findeBA(d.barcode)){ toast(`Betriebsauftrag ${d.barcode} gibt es schon bei einem anderen Element`); return; }
+  await formPlaene(r.form,d,e);
   if(!d.barcode) d.barcode=e.barcode||autoBarcode(o);
+  d.anzahl=anz(d);
   if(d.status==='montiert'&&e.status!=='montiert'&&!e.montiert) d.montiert={am:Date.now(),von:'Büro'};
   if(d.status!=='montiert') d.montiert=null;
   patch('elemente',e.id,d); S.aktivElement=e.id; renderAll(); toast('Element gespeichert');
@@ -980,7 +1235,7 @@ async function planLink(p){
   qrCache.clear(); renderAll(); toast('Plan gespeichert');
 }
 async function planLoeschen(p){
-  const n=S.elemente.filter(e=>e.montagePlanId===p.id||e.detailPlanId===p.id).length;
+  const n=S.elemente.filter(e=>e[feldVon(p.art)]===p.id).length;
   if(!await bestaetigen('Plan entfernen?',`${p.name} wird entfernt${n?` und bei ${n} Element${n>1?'en':''} nicht mehr angezeigt`:''}.`,'Entfernen')) return;
   planLoeschenIntern(p); renderAll(); toast('Plan entfernt');
 }
@@ -988,7 +1243,8 @@ async function planLoeschen(p){
 /* ---------- Druck ---------- */
 function drucken(els){
   if(!els.length){ toast('Keine Etiketten ausgewählt'); return; }
-  const a=$('#print-area'); a.innerHTML=els.map(labelHTML).join('');
+  // Jede Etikette so oft wie bei «Anzahl» eingestellt
+  const a=$('#print-area'); a.innerHTML=els.map(e=>{ const l=labelHTML(e); return l.repeat(anz(e)); }).join('');
   const imgs=$$('img',a);
   Promise.all(imgs.map(i=>i.complete?1:new Promise(r=>{ i.onload=i.onerror=r; }))).then(()=>setTimeout(()=>window.print(),60));
 }
@@ -998,13 +1254,32 @@ window.addEventListener('afterprint',()=>{ $('#print-area').innerHTML=''; });
 const syncBadge=()=>`<span class="sync"></span>`;
 function scanKopf(){ return `<header class="sc-kopf">${logoMarkup()}${syncBadge()}</header>`; }
 
+function scanFehler(){
+  $('#scan').innerHTML=`<div class="sc">${scanKopf()}<div class="sc-fehler"><h1>QR-Code nicht lesbar</h1><p>Der Link ist unvollständig. Bitte die Etikette erneut scannen.</p><p><a href="#" data-act="zurVerwaltung">Zur Verwaltung</a></p></div></div>`;
+  syncStatus();
+}
+// QR-Code der Etikette: #b=Betriebsauftrag
+function renderScanBA(nr){
+  const e=findeBA(nr);
+  if(!e){
+    S.scanElement=null;
+    $('#scan').innerHTML=`<div class="sc">${scanKopf()}<div class="sc-fehler"><h1>Element nicht gefunden</h1><p>Betriebsauftrag ${h(nr)} ist nicht in der Datenbank. Bitte im Büro nachfragen.</p></div></div>`;
+    syncStatus(); return;
+  }
+  S.scanElement=e.id; renderScanElement(e);
+}
+// Etikette aus Enventa: #a=Auftragsnr&p=Position (optional o, k, b, g, e). Unbekannte Elemente werden beim ersten Scan angelegt.
+function renderScanEnventa(q){
+  const a=(q.get('a')||'').trim(), p=(q.get('p')||'').trim();
+  if(!schluessel(a)||!schluessel(p)){ scanFehler(); return; }
+  const x=Object.fromEntries(['o','k','b','g','e'].map(k=>[k,q.get(k)||'']));
+  const e=enventaElement(a,p,x);
+  S.scanElement=e.id; renderScanElement(e);
+}
 function renderScan(code){
   const box=$('#scan'); let p;
   try{ p=dec(code); if(!p||typeof p!=='object') throw new Error('leer'); }
-  catch(err){
-    box.innerHTML=`<div class="sc">${scanKopf()}<div class="sc-fehler"><h1>QR-Code nicht lesbar</h1><p>Der Link ist unvollständig. Bitte die Etikette erneut scannen.</p><p><a href="#" data-act="zurVerwaltung">Zur Verwaltung</a></p></div></div>`;
-    syncStatus(); return;
-  }
+  catch(err){ scanFehler(); return; }
   const e=elem(p.i);
   if(e){ S.scanElement=e.id; renderScanElement(e); return; }
   S.scanElement=null;
@@ -1032,9 +1307,9 @@ function renderScanElement(e){
     </section>
     <dl class="sc-daten">
       ${zeile('Objekt',o.name)}${zeile('Kunde',o.kunde)}${zeile('Adresse',[o.strasse,o.plzOrt].filter(Boolean).join(', '))}
-      ${zeile('Geschoss',e.geschoss)}${zeile('Lieferdatum',fmt(lief(e)))}${zeile('Auftrag',o.auftragNr)}${zeile('Barcode',e.barcode)}
+      ${zeile('Geschoss',e.geschoss)}${zeile('Lieferdatum',fmt(lief(e)))}${zeile('Auftrag',o.auftragNr)}${zeile('Betriebsauftrag',e.barcode)}
     </dl>
-    <section class="sc-block"><h2>Pläne</h2><div id="pkMontage"></div><div id="pkDetail"></div>${weiterePlaene(e,mp,dp)}</section>
+    <section class="sc-block"><h2>Pläne</h2><div id="pkMontage"></div><div id="pkDetail"></div></section>
     <section class="sc-block"><h2>Montage</h2>
       <div class="sc-stapel">
         <label class="feld"><span>Monteur</span><input id="monteurName" value="${h(LS.get('monteur','')||'')}" placeholder="Vor- und Nachname" autocomplete="name"></label>
@@ -1061,17 +1336,6 @@ function renderScanElement(e){
 
 /* Pläne in der Monteur-Ansicht: laden, dann öffnen / senden / speichern */
 const PLAN_CACHE=new Map(); // planId -> {status:'laedt'|'bereit'|'fehler', url, file, fertig, total, fehler}
-function planGruppe(titel,liste){
-  if(!liste.length) return '';
-  return `<h3 class="sc-h3">${titel}</h3>`+liste.map(p=>`<div class="pk klein" data-pk="${p.id}"></div>`).join('');
-}
-function weiterePlaene(e,mp,dp){
-  const sortN=(a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true});
-  const rest=S.plaene.filter(p=>p.objektId===e.objektId&&p!==mp&&p!==dp);
-  const pre=mp||dp?'Weitere ':'';
-  return planGruppe(pre+'Montagepläne zum Objekt',rest.filter(p=>p.art==='montage').sort(sortN))
-        +planGruppe(pre+'Detailpläne zum Objekt',rest.filter(p=>p.art==='detail').sort(sortN));
-}
 function planKarte(p,titel,slot,planId){
   const el=$(slot); if(!el) return;
   if(!p&&planId){ el.innerHTML=`<div class="pk leer"><strong>${titel}</strong><span>Der zugewiesene ${titel} ist nicht in der Datenbank. Bitte im Büro beim Element neu hochladen.</span></div>`; return; }
@@ -1086,7 +1350,7 @@ function pkZeichnen(id){
   $$(`[data-pk="${id}"]`).forEach(el=>{
     if(!p){ el.innerHTML=''; return; }
     const titel=el.dataset.pkTitel;
-    const kopf=`<div class="pk-text"><strong>${titel?h(titel):h(p.name)}</strong><span>${titel?h(p.name):(p.art==='montage'?'Montageplan':'Detailplan')}${p.size?', '+kb(p.size):''}</span>`;
+    const kopf=`<div class="pk-text"><strong>${titel?h(titel):h(p.name)}</strong><span>${titel?h(p.name):(ARTEN[p.art]||'Plan')}${p.size?', '+kb(p.size):''}</span>`;
     if(!p.fileId){
       el.innerHTML=kopf+`</div>`+(p.url?`<div class="pk-akt"><a class="btn primary" href="${h(p.url)}" target="_blank" rel="noopener">PDF öffnen</a></div>`:'');
       return;
@@ -1126,9 +1390,9 @@ async function planTeilen(id){
   catch(err){ if(err&&err.name!=='AbortError') toast('Senden nicht möglich, bitte Herunterladen verwenden'); }
 }
 async function planZuweisenDialog(p){
-  const els=elementeVon(p.objektId); const feldName=p.art==='montage'?'montagePlanId':'detailPlanId';
+  const els=elementeVon(p.objektId); const feldName=feldVon(p.art);
   if(!els.length){ toast('Dieses Objekt hat noch keine Elemente'); return; }
-  const r=await dialog(`${p.art==='montage'?'Montageplan':'Detailplan'} zuweisen`,`<p><strong>${h(p.name)}</strong></p><p class="leer">Elemente auswählen, die diesen Plan bekommen. Ein Montageplan kann für viele Elemente gelten.</p>
+  const r=await dialog(`${ARTEN[p.art]||'Plan'} zuweisen`,`<p><strong>${h(p.name)}</strong></p><p class="leer">Elemente auswählen, die diesen Plan bekommen.</p>
     <div class="zw-liste">${els.map(e=>{ const alt=plan(e[feldName]); return `<label><input type="checkbox" name="el_${e.id}" ${e[feldName]===p.id?'checked':''}><span><strong>${h(e.pos)}</strong> ${h(e.bezeichnung)}${alt&&alt.id!==p.id?`<br><small>bisher: ${h(alt.name)}</small>`:''}</span></label>`; }).join('')}</div>`,{ok:'Zuweisen'});
   if(!r) return; let n=0;
   for(const e of els){
@@ -1173,7 +1437,7 @@ async function fotosHinzufuegen(files){
     if(!f.type||!f.type.startsWith('image/')) continue;
     const b=await komprimieren(f); const buf=await b.arrayBuffer();
     if(buf.byteLength>8*1048576){ toast(`${f.name} ist zu gross`); continue; }
-    const {id,done}=putFile(f.name,b.type||'image/jpeg',buf);
+    const {id,done}=putFile(`fotos/${e.id}/${uid()}.jpg`,f.name,b.type||'image/jpeg',buf);
     neu.push({id,ts:Date.now(),von}); laeufe.push(done);
   }
   if(!neu.length){ toast('Keine Bilddatei gefunden'); return; }
@@ -1192,6 +1456,51 @@ async function fotoLoeschen(fid){
 }
 
 
+/* ---------- Produktion: Barcode scannen, Produktionsplan anzeigen ---------- */
+// Der Handscanner tippt die Nummer ins Feld und drückt Enter. Der Plan erscheint in der Seite, das Feld ist sofort wieder bereit.
+let pdUrl=null, pdLauf=0;
+function renderProduktion(){
+  const box=$('#produktion');
+  if(!$('#pdNr',box)){
+    box.innerHTML=`<div class="pd">
+      <header class="pd-kopf"><span class="tb-logo">${logoMarkup()}</span><h1>Produktion · Plan scannen</h1>${syncBadge()}<a class="btn" href="#">Zur Verwaltung</a></header>
+      <form class="pd-form" id="pdForm" autocomplete="off"><input id="pdNr" inputmode="numeric" placeholder="Betriebsauftrag scannen oder eintippen" aria-label="Betriebsauftrag"><button class="btn" type="submit">Plan öffnen</button></form>
+      <div class="pd-info" id="pdInfo"><span>Barcode auf der Etikette scannen. Geht der Scanner nicht, die Nummer unter dem Barcode eintippen und Enter drücken.</span></div>
+      <div class="pd-leer" id="pdLeer">Bereit zum Scannen</div>
+      <iframe class="pd-pdf" id="pdPdf" title="Produktionsplan" hidden></iframe>
+    </div>`;
+    // Der PDF-Viewer holt sich beim Laden den Fokus. Zurück ins Feld, damit der nächste Scan dort landet.
+    $('#pdPdf').addEventListener('load',()=>[50,400,1200].forEach(ms=>setTimeout(()=>{ const i=$('#pdNr'); if(i&&document.body.classList.contains('modus-prod')) i.focus(); },ms)));
+  }
+  syncStatus();
+  setTimeout(()=>{ const i=$('#pdNr'); if(i) i.focus(); },0);
+}
+function pdLeer(text){ const fr=$('#pdPdf'), l=$('#pdLeer'); fr.hidden=true; fr.removeAttribute('src'); l.hidden=false; l.textContent=text; }
+async function pdZeigen(eingabe){
+  const nr=String(eingabe||'').replace(/\s+/g,''); const info=$('#pdInfo'), inp=$('#pdNr');
+  if(!nr||!info) return;
+  inp.value=''; inp.focus();
+  const lauf=++pdLauf;
+  const e=findeBA(nr);
+  if(!e){ info.innerHTML=`<span class="gross">${h(nr)}</span><span class="fehler">Betriebsauftrag nicht gefunden. Ist die Excel dieses Auftrags importiert?</span>`; pdLeer('Kein Plan'); return; }
+  const o=obj(e.objektId)||{};
+  const kopf=`<span class="gross">${h(e.barcode)}</span><span><b>${h([e.pos,e.bezeichnung].filter(Boolean).join(' '))}</b><br>${h([e.gewerk,o.name].filter(Boolean).join(' · '))}</span><span class="spacer"></span>`;
+  const p=plan(e.produktionPlanId);
+  if(!p){ info.innerHTML=kopf+'<span class="fehler">Für dieses Element ist noch kein Produktionsplan hochgeladen.</span>'; pdLeer('Kein Produktionsplan'); return; }
+  info.innerHTML=kopf+'<span>Plan wird geladen …</span>'; pdLeer('Plan wird geladen …');
+  const f=p.fileId?await getFile(p.fileId):null;
+  if(lauf!==pdLauf) return;
+  if(!f){
+    info.innerHTML=kopf+(p.url?`<a class="btn primary" href="${h(p.url)}" target="_blank" rel="noopener">Plan öffnen</a>`:'<span class="fehler">Der Plan konnte nicht geladen werden. Internet prüfen und nochmals scannen.</span>');
+    pdLeer('Plan nicht verfügbar'); return;
+  }
+  if(pdUrl) URL.revokeObjectURL(pdUrl);
+  pdUrl=URL.createObjectURL(new Blob([f.data],{type:'application/pdf'}));
+  const fr=$('#pdPdf'); fr.src=pdUrl; fr.hidden=false; $('#pdLeer').hidden=true;
+  info.innerHTML=kopf+`<span>${h(p.name)}</span><a class="btn" href="${pdUrl}" target="_blank" rel="noopener">In neuem Tab</a><a class="btn" href="${pdUrl}" download="${h(p.name)}">Herunterladen</a>`;
+  inp.focus();
+}
+
 /* ---------- Ereignisse ---------- */
 document.addEventListener('click',ev=>{
   const t=ev.target;
@@ -1205,7 +1514,7 @@ document.addEventListener('click',ev=>{
   if(oi){ S.aktivObjekt=oi.dataset.obj; S.aktivElement=null; S.auswahl.clear(); renderAll(); return; }
   let b;
   if((b=t.closest('[data-el-edit]'))){ elementBearbeiten(b.dataset.elEdit); return; }
-  if((b=t.closest('[data-el-scan]'))){ const e=elem(b.dataset.elScan); if(e){ S.scanElement=e.id; location.hash='e='+enc(payloadFor(e)); } return; }
+  if((b=t.closest('[data-el-scan]'))){ const e=elem(b.dataset.elScan); if(e){ S.scanElement=e.id; location.hash=hashFor(e); } return; }
   if((b=t.closest('[data-plan-dl]'))){ const p=plan(b.dataset.planDl); if(p) planHerunterladen(p); return; }
   if((b=t.closest('[data-plan-edit]'))){ const p=plan(b.dataset.planEdit); if(p) planLink(p); return; }
   if((b=t.closest('[data-plan-del]'))){ const p=plan(b.dataset.planDel); if(p) planLoeschen(p); return; }
@@ -1216,6 +1525,31 @@ document.addEventListener('click',ev=>{
 document.addEventListener('keydown',ev=>{
   const row=ev.target.closest&&ev.target.closest('[data-row]');
   if(row&&ev.target===row&&(ev.key==='Enter'||ev.key===' ')){ ev.preventDefault(); zeileWaehlen(row); }
+  // Produktion: Scanner-Eingabe landet immer im Nummernfeld, auch wenn vorher etwas anderes angeklickt wurde
+  if(document.body.classList.contains('modus-prod')&&/^\d$/.test(ev.key)){ const i=$('#pdNr'); if(i&&document.activeElement!==i) i.focus(); }
+});
+document.addEventListener('submit',ev=>{
+  if(ev.target.id==='pdForm'){ ev.preventDefault(); pdZeigen($('#pdNr').value); }
+});
+// PDF auf M, D oder P ziehen; Excel irgendwo ins Fenster ziehen
+const zielZelle=ev=>ev.target.closest&&ev.target.closest('[data-pz]');
+document.addEventListener('dragover',ev=>{
+  if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
+  if(!ev.dataTransfer||![...ev.dataTransfer.types].includes('Files')) return;
+  ev.preventDefault();
+  $$('.pz.drop').forEach(x=>x.classList.remove('drop'));
+  const z=zielZelle(ev); if(z) z.classList.add('drop');
+});
+document.addEventListener('dragleave',ev=>{ const z=zielZelle(ev); if(z) z.classList.remove('drop'); });
+document.addEventListener('drop',async ev=>{
+  if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
+  const files=ev.dataTransfer?[...ev.dataTransfer.files]:[]; if(!files.length) return;
+  ev.preventDefault(); $$('.pz.drop').forEach(x=>x.classList.remove('drop'));
+  const z=zielZelle(ev);
+  if(z){ const [eid,art]=z.dataset.pz.split('|'); const r=await elementPlanSetzen(eid,art,files[0]); if(r){ renderAll(); toast(`${ARTEN[art]} wird hochgeladen`); r.done.then(()=>toast(`${ARTEN[art]} gespeichert`),()=>{}); } return; }
+  const xl=files.find(f=>/\.(xlsx|xls|csv)$/i.test(f.name));
+  if(xl){ importExcel(xl); return; }
+  toast('PDF direkt auf M, D oder P beim Element ziehen');
 });
 function zeileWaehlen(row){
   S.aktivElement=row.dataset.row;
@@ -1227,17 +1561,16 @@ document.addEventListener('input',ev=>{ if(ev.target.id==='monteurName') LS.set(
 document.addEventListener('change',async ev=>{
   const t=ev.target;
   if(t.matches('[data-upload]')){
-    const art=t.dataset.upload, files=[...t.files]; t.value=''; const laeufe=[]; let zugewiesen=0;
-    for(const f of files){
-      if(!pdfPruefen(f)) continue;
-      const r=planHochladen(f,art,S.aktivObjekt,await f.arrayBuffer());
-      zugewiesen+=autoZuweisen(r.planId,art,f.name,S.aktivObjekt);
-      laeufe.push(r.done);
-    }
-    if(laeufe.length){
-      renderAll(); toast('Pläne werden hochgeladen');
-      Promise.all(laeufe).then(()=>toast(`${laeufe.length} Plan${laeufe.length>1?'e':''} hochgeladen`+(zugewiesen?`, ${zugewiesen} Element${zugewiesen>1?'en':''} automatisch zugewiesen`:'. Jetzt beim Element unter Bearbeiten zuweisen.')),()=>{});
-    }
+    const files=[...t.files]; t.value=''; massenUpload(files,t.dataset.upload);
+  }else if(t.matches('[data-excel]')){
+    const f=t.files[0]; t.value=''; if(f) importExcel(f);
+  }else if(t.matches('[data-pz-file]')){
+    const f=t.files[0]; t.value=''; const [eid,art]=t.dataset.pzFile.split('|');
+    const r=await elementPlanSetzen(eid,art,f);
+    if(r){ renderAll(); toast(`${ARTEN[art]} wird hochgeladen`); r.done.then(()=>toast(`${ARTEN[art]} gespeichert`),()=>{}); }
+  }else if(t.matches('[data-anz]')){
+    const e=elem(t.dataset.anz); if(!e) return;
+    const n=anz({anzahl:t.value}); t.value=n; patch('elemente',e.id,{anzahl:n}); renderObjekt(); renderVorschau();
   }else if(t.matches('[data-chk]')){
     t.checked?S.auswahl.add(t.dataset.chk):S.auswahl.delete(t.dataset.chk); updateAuswahlBtn();
   }else if(t.matches('[data-chk-all]')){
@@ -1251,97 +1584,25 @@ document.addEventListener('change',async ev=>{
 
 function route(){
   const m=/^#e=([A-Za-z0-9_-]+)/.exec(location.hash);
-  document.body.classList.toggle('modus-scan',!!m);
+  const q=/^#a=/.test(location.hash)?new URLSearchParams(location.hash.slice(1)):null;
+  const b=/^#b=([^&]+)/.exec(location.hash);
+  const prod=location.hash==='#produktion';
+  const scan=!prod&&!!(m||q||b);
+  document.body.classList.toggle('modus-scan',scan);
+  document.body.classList.toggle('modus-prod',prod);
   if(!S.gestartet){
-    if(m) $('#scan').innerHTML=`<div class="sc">${scanKopf()}<p class="sc-fehler">Daten werden geladen</p></div>`;
+    if(scan) $('#scan').innerHTML=`<div class="sc">${scanKopf()}<p class="sc-fehler">Daten werden geladen</p></div>`;
+    if(prod) $('#produktion').innerHTML=`<div class="pd-leer">Daten werden geladen</div>`;
     syncStatus(); return;
   }
-  if(m){ window.scrollTo(0,0); renderScan(m[1]); }
+  if(prod) renderProduktion();
+  else if(scan){ window.scrollTo(0,0); b?renderScanBA(decodeURIComponent(b[1])):m?renderScan(m[1]):renderScanEnventa(q); }
   else{ renderAll(); }
   syncStatus();
 }
 window.addEventListener('hashchange',route);
 window.addEventListener('popstate',route);
 window.addEventListener('resize',debounce(fitSkala,120));
-
-/* ---------- Demo-PDFs (werden im Browser erzeugt) ---------- */
-function pdfEsc(s){ return String(s).replace(/[^\x20-\xFF]/g,'?').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)'); }
-function buildPdf(content){
-  const objs=[
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`
-  ];
-  let out='%PDF-1.4\n'; const off=[];
-  objs.forEach((o,i)=>{ off.push(out.length); out+=`${i+1} 0 obj\n${o}\nendobj\n`; });
-  const xref=out.length;
-  out+=`xref\n0 ${objs.length+1}\n0000000000 65535 f \n`+off.map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('');
-  out+=`trailer\n<< /Size ${objs.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  const bytes=new Uint8Array(out.length);
-  for(let i=0;i<out.length;i++) bytes[i]=out.charCodeAt(i)&255;
-  return bytes;
-}
-function demoPdf({art,titel,zeilen=[],marker=[]}){
-  const L=[];
-  const T=(x,y,s,t,bold)=>L.push(`BT /${bold?'F2':'F1'} ${s} Tf ${x} ${y} Td (${pdfEsc(t)}) Tj ET`);
-  L.push('0.141 0.322 0.561 rg 40 782 515 32 re f');
-  L.push('1 1 1 rg'); T(52,793,14,'PE Fabrikation AG',true); T(430,793,12,art==='montage'?'Montageplan':'Detailplan',false);
-  L.push('0 0 0 rg'); T(40,748,18,titel,true);
-  zeilen.forEach((z,i)=>T(40,726-i*15,10,z,false));
-  L.push('0.2 0.2 0.2 RG');
-  if(art==='montage'){
-    L.push('4 w 40 170 515 470 re S');
-    L.push('2 w 250 170 m 250 640 l S 250 420 m 555 420 l S 410 420 m 410 640 l S 40 360 m 250 360 l S');
-    T(60,610,10,'Wohnen / Essen',false); T(265,610,10,'Bad',false); T(425,610,10,'Dusche / WC',false); T(265,395,10,'Zimmer',false); T(60,335,10,'Küche',false);
-    marker.forEach(m=>{ L.push(`0.141 0.322 0.561 rg ${m.x} ${m.y} 58 16 re f`); L.push('1 1 1 rg'); T(m.x+4,m.y+4,8,m.t,true); L.push('0 0 0 rg'); });
-    L.push('0.4 0.4 0.4 RG 0.6 w 40 150 m 555 150 l S'); T(40,138,8,'Massstab 1:50, alle Masse vor Ort prüfen',false);
-  }else{
-    L.push('0.3 0.3 0.3 RG 3 w 200 190 200 440 re S');
-    L.push('1.2 w 215 190 m 215 630 l S 385 190 m 385 630 l S 200 300 m 400 300 l S 200 520 m 400 520 l S');
-    L.push('0.141 0.322 0.561 RG 3 w 300 190 m 300 480 l 260 480 l S 300 480 m 340 480 l S');
-    L.push('0.141 0.322 0.561 rg 252 474 12 12 re f 336 474 12 12 re f');
-    L.push('0.6 0.1 0.1 RG 2 w 240 190 m 240 260 l S');
-    L.push('0 0 0 rg 0.3 0.3 0.3 RG 0.6 w 200 170 m 400 170 l S 200 165 m 200 175 l S 400 165 m 400 175 l S');
-    T(285,156,9,'1150',false);
-    L.push('430 190 m 430 630 l S 425 190 m 435 190 l S 425 630 m 435 630 l S'); T(438,405,9,'2000',false);
-    T(262,494,8,'KW / WW',false); T(245,270,8,'AW',false);
-    T(40,140,8,'Ansicht von vorne, Anschlüsse ab OK FFB',false);
-  }
-  L.push('0 0 0 rg'); T(40,60,8,'Demo-Plan, im Browser erzeugt für die Präsentation. Echte Pläne einfach als PDF hochladen.',false);
-  return buildPdf(L.join('\n'));
-}
-
-/* ---------- Beispieldaten ---------- */
-function seed(){
-  const t=Date.now();
-  const o1={id:uid(),name:'Feldblumenweg 15 17 Zürich',kunde:'Sada AG',strasse:'Feldblumenweg 15',plzOrt:'8048 Zürich',auftragNr:'26-0412',lieferdatum:'2026-09-25',created:t};
-  const o2={id:uid(),name:'Seestrasse 42 Lachen',kunde:'Muster Immobilien AG',strasse:'Seestrasse 42',plzOrt:'8853 Lachen',auftragNr:'26-0457',lieferdatum:'2026-10-14',created:t+1};
-  saveObj(o1); saveObj(o2);
-  const mkPlan=(o,art,name,cfg)=>{
-    const bytes=demoPdf({art,...cfg});
-    const {id}=putFile(name,'application/pdf',bytes.buffer);
-    const p={id:uid(),objektId:o.id,art,name,fileId:id,url:'',size:bytes.length,created:Date.now()};
-    savePlan(p); return p.id;
-  };
-  const kopf=[`Objekt: ${o1.name}`,`Bauherr: ${o1.kunde}, Auftrag ${o1.auftragNr}`];
-  const mAtt=mkPlan(o1,'montage','Montageplan Attika.pdf',{titel:'Montageplan Attika',zeilen:kopf,marker:[{x:420,y:560,t:'NZ 41.03'},{x:470,y:470,t:'NZ 41.04'},{x:290,y:540,t:'NZ 41.05'}]});
-  const m3=mkPlan(o1,'montage','Montageplan 3.OG.pdf',{titel:'Montageplan 3. OG',zeilen:kopf,marker:[{x:430,y:560,t:'NZ 31.02'}]});
-  const d4103=mkPlan(o1,'detail','Detailplan NZ 41.03.pdf',{titel:'NZ 41.03 Dusche Attika',zeilen:[...kopf,'Verrohrung Wasser, Mischer UP, Ablauf bodeneben']});
-  const d4104=mkPlan(o1,'detail','Detailplan NZ 41.04.pdf',{titel:'NZ 41.04 WC Attika',zeilen:[...kopf,'Vorwandelement WC, Spülkasten UP 12 cm']});
-  const d3102=mkPlan(o1,'detail','Detailplan NZ 31.02.pdf',{titel:'NZ 31.02 Dusche 3. OG',zeilen:[...kopf,'Verrohrung Wasser und Abwasser']});
-  const els=[
-    {objektId:o1.id,pos:'NZ 41.03',bezeichnung:'Dusche Attika',gewerk:'Verrohrung Wasser',geschoss:'Attika',montagePlanId:mAtt,detailPlanId:d4103,status:'geliefert',barcode:'2604120103'},
-    {objektId:o1.id,pos:'NZ 41.04',bezeichnung:'WC Attika',gewerk:'Vorwandelement WC',geschoss:'Attika',montagePlanId:mAtt,detailPlanId:d4104,status:'geliefert',barcode:'2604120104'},
-    {objektId:o1.id,pos:'NZ 41.05',bezeichnung:'Lavabo Attika',gewerk:'Verrohrung Wasser',geschoss:'Attika',montagePlanId:mAtt,detailPlanId:'',status:'produziert',barcode:'2604120105'},
-    {objektId:o1.id,pos:'NZ 31.02',bezeichnung:'Dusche 3. OG',gewerk:'Verrohrung Wasser und Abwasser',geschoss:'3. OG',montagePlanId:m3,detailPlanId:d3102,status:'montiert',barcode:'2604120302',montiert:{am:new Date('2026-09-26T10:40:00').getTime(),von:'Montagegruppe 2'}},
-    {objektId:o2.id,pos:'NZ 11.01',bezeichnung:'Küche EG',gewerk:'Verrohrung Wasser',geschoss:'EG',montagePlanId:'',detailPlanId:'',status:'geplant',barcode:'2604570101'}
-  ];
-  els.forEach(e=>saveElem({id:uid(),lieferdatum:'',fotos:[],montiert:null,created:Date.now(),...e}));
-  saveSettings({seeded:true});
-}
 
 /* ---------- Start ---------- */
 async function init(){
