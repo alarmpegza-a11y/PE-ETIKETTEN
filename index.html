@@ -1751,4 +1751,181 @@ function renderProduktion(){
     // Der PDF-Viewer holt sich beim Laden den Fokus. Zurück ins Feld, damit der nächste Scan dort landet.
     $('#pdPdf').addEventListener('load',()=>[50,400,1200].forEach(ms=>setTimeout(()=>{ const i=$('#pdNr'); if(i&&document.body.classList.contains('modus-prod')) i.focus(); },ms)));
   }
-  sy
+  syncStatus();
+  setTimeout(()=>{ const i=$('#pdNr'); if(i) i.focus(); },0);
+}
+function pdLeer(text){ const fr=$('#pdPdf'), l=$('#pdLeer'); fr.hidden=true; fr.removeAttribute('src'); l.hidden=false; l.textContent=text; }
+async function pdZeigen(eingabe){
+  const nr=String(eingabe||'').replace(/\s+/g,''); const info=$('#pdInfo'), inp=$('#pdNr');
+  if(!nr||!info) return;
+  inp.value=''; inp.focus();
+  const lauf=++pdLauf;
+  const e=findeBA(nr);
+  if(!e){ info.innerHTML=`<span class="gross">${h(nr)}</span><span class="fehler">Betriebsauftrag nicht gefunden. Ist die Excel dieses Auftrags importiert?</span>`; pdLeer('Kein Plan'); return; }
+  const o=obj(e.objektId)||{};
+  const kopf=`<span class="gross">${h(e.barcode)}</span><span><b>${h(elText(e))}</b><br>${h([e.gewerk,o.name].filter(Boolean).join(' · '))}</span><span class="spacer"></span>`;
+  const p=plan(e.produktionPlanId);
+  if(!p){ info.innerHTML=kopf+'<span class="fehler">Für dieses Element ist noch kein Produktionsplan hochgeladen.</span>'; pdLeer('Kein Produktionsplan'); return; }
+  info.innerHTML=kopf+'<span>Plan wird geladen …</span>'; pdLeer('Plan wird geladen …');
+  const f=p.fileId?await getFile(p.fileId):null;
+  if(lauf!==pdLauf) return;
+  if(!f){
+    info.innerHTML=kopf+(p.url?`<a class="btn primary" href="${h(p.url)}" target="_blank" rel="noopener">Plan öffnen</a>`:'<span class="fehler">Der Plan konnte nicht geladen werden. Internet prüfen und nochmals scannen.</span>');
+    pdLeer('Plan nicht verfügbar'); return;
+  }
+  if(pdUrl) URL.revokeObjectURL(pdUrl);
+  pdUrl=URL.createObjectURL(new Blob([f.data],{type:'application/pdf'}));
+  const fr=$('#pdPdf'); fr.src=pdUrl; fr.hidden=false; $('#pdLeer').hidden=true;
+  const datei=`${e.barcode} ${p.name}`.replace(/[\\/:*?"<>|]+/g,'_');
+  info.innerHTML=kopf+`<span>${h(p.name)}</span><a class="btn" href="${pdUrl}" target="_blank" rel="noopener">In neuem Tab</a><a class="btn" href="${pdUrl}" download="${h(datei)}">Herunterladen</a>`;
+  if(pdModus()==='download'){ const a=document.createElement('a'); a.href=pdUrl; a.download=datei; document.body.appendChild(a); a.click(); a.remove(); }
+  inp.focus();
+}
+
+/* ---------- Ereignisse ---------- */
+document.addEventListener('click',ev=>{
+  const t=ev.target;
+  const act=t.closest('[data-act]');
+  if(act&&ACT[act.dataset.act]){ ev.preventDefault(); ACT[act.dataset.act](act); return; }
+  let vb;
+  if((vb=t.closest('[data-pk-laden]'))){ planLaden(vb.dataset.pkLaden); return; }
+  if((vb=t.closest('[data-pk-teilen]'))){ planTeilen(vb.dataset.pkTeilen); return; }
+  if((vb=t.closest('[data-plan-zuweisen]'))){ const p=plan(vb.dataset.planZuweisen); if(p) planZuweisenDialog(p); return; }
+  const oi=t.closest('[data-obj]');
+  if(oi){ if(S.aktivObjekt!==oi.dataset.obj) S.aktivOrdner='*'; S.aktivObjekt=oi.dataset.obj; S.aktivElement=null; S.auswahl.clear(); renderAll(); return; }
+  const oo=t.closest('[data-ordner]');
+  if(oo){ S.aktivOrdner=oo.dataset.ordner; S.aktivElement=null; S.auswahl.clear(); renderAll(); return; }
+  let b;
+  if((b=t.closest('[data-el-edit]'))){ elementBearbeiten(b.dataset.elEdit); return; }
+  if((b=t.closest('[data-el-scan]'))){ const e=elem(b.dataset.elScan); if(e){ S.scanElement=e.id; location.hash=hashFor(e); } return; }
+  if((b=t.closest('[data-plan-dl]'))){ const p=plan(b.dataset.planDl); if(p) planHerunterladen(p); return; }
+  if((b=t.closest('[data-plan-edit]'))){ const p=plan(b.dataset.planEdit); if(p) planLink(p); return; }
+  if((b=t.closest('[data-plan-del]'))){ const p=plan(b.dataset.planDel); if(p) planLoeschen(p); return; }
+  if((b=t.closest('[data-foto-del]'))){ fotoLoeschen(b.dataset.fotoDel); return; }
+  if((b=t.closest('[data-galerie]'))){ galerieOeffnen(b.dataset.galerie,b.dataset.idx!=null?Number(b.dataset.idx):null); return; }
+  if((b=t.closest('[data-lb]'))){ lbZeigen(Number(b.dataset.lb)); return; }
+  if((b=t.closest('[data-lb-nav]'))){ lbZeigen(LB.i+Number(b.dataset.lbNav)); return; }
+  if(t.closest('[data-lb-zu]')){ $('#lb').close(); return; }
+  const row=t.closest('[data-row]');
+  if(row&&!t.closest('button,input,a,label')) zeileWaehlen(row);
+});
+document.addEventListener('keydown',ev=>{
+  const row=ev.target.closest&&ev.target.closest('[data-row]');
+  if(row&&ev.target===row&&(ev.key==='Enter'||ev.key===' ')){ ev.preventDefault(); zeileWaehlen(row); }
+  // Produktion: Scanner-Eingabe landet immer im Nummernfeld, auch wenn vorher etwas anderes angeklickt wurde
+  if(document.body.classList.contains('modus-prod')&&/^\d$/.test(ev.key)){ const i=$('#pdNr'); if(i&&document.activeElement!==i) i.focus(); }
+});
+document.addEventListener('submit',ev=>{
+  if(ev.target.id==='pdForm'){ ev.preventDefault(); pdZeigen($('#pdNr').value); }
+  if(ev.target.id==='codeForm'){ ev.preventDefault(); fotoCodePruefen(); }
+});
+// PDF auf M, D oder P ziehen; Excel irgendwo ins Fenster ziehen
+const zielZelle=ev=>ev.target.closest&&ev.target.closest('[data-pz]');
+document.addEventListener('dragover',ev=>{
+  if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
+  if(!ev.dataTransfer||![...ev.dataTransfer.types].includes('Files')) return;
+  ev.preventDefault();
+  $$('.pz.drop').forEach(x=>x.classList.remove('drop'));
+  const z=zielZelle(ev); if(z) z.classList.add('drop');
+});
+document.addEventListener('dragleave',ev=>{ const z=zielZelle(ev); if(z) z.classList.remove('drop'); });
+document.addEventListener('drop',async ev=>{
+  if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
+  const files=ev.dataTransfer?[...ev.dataTransfer.files]:[]; if(!files.length) return;
+  ev.preventDefault(); $$('.pz.drop').forEach(x=>x.classList.remove('drop'));
+  const z=zielZelle(ev);
+  if(z){ const [eid,art]=z.dataset.pz.split('|'); const r=await elementPlanSetzen(eid,art,files[0]); if(r){ renderAll(); toast(`${ARTEN[art]} wird hochgeladen`); r.done.then(()=>toast(`${ARTEN[art]} gespeichert`),()=>{}); } return; }
+  const xl=files.find(f=>/\.(xlsx|xls|csv)$/i.test(f.name));
+  if(xl){ importExcel(xl); return; }
+  toast('PDF direkt auf M, D oder P beim Element ziehen');
+});
+function zeileWaehlen(row){
+  S.aktivElement=row.dataset.row;
+  $$('.el-tab tr.aktiv').forEach(r=>r.classList.remove('aktiv')); row.classList.add('aktiv');
+  renderVorschau();
+  if(matchMedia('(max-width:1320px)').matches) $('#vorschau').scrollIntoView({behavior:'smooth',block:'start'});
+}
+document.addEventListener('input',ev=>{
+  if(ev.target.id==='monteurName') LS.set('monteur',ev.target.value.trim());
+  if(ev.target.matches('[data-layout]')&&layoutVorschau) layoutVorschau();
+});
+document.addEventListener('change',async ev=>{
+  const t=ev.target;
+  if(t.matches('[data-upload]')){
+    const files=[...t.files]; t.value=''; massenUpload(files,t.dataset.upload);
+  }else if(t.matches('[data-pd-modus]')){
+    LS.set('pdModus',t.value); toast(t.value==='download'?'Pläne werden nach dem Scan heruntergeladen':'Pläne werden nur hier angezeigt'); const i=$('#pdNr'); if(i) i.focus();
+  }else if(t.matches('[data-excel]')){
+    const f=t.files[0]; t.value=''; if(f) importExcel(f);
+  }else if(t.matches('[data-pz-file]')){
+    const f=t.files[0]; t.value=''; const [eid,art]=t.dataset.pzFile.split('|');
+    const r=await elementPlanSetzen(eid,art,f);
+    if(r){ renderAll(); toast(`${ARTEN[art]} wird hochgeladen`); r.done.then(()=>toast(`${ARTEN[art]} gespeichert`),()=>{}); }
+  }else if(t.matches('[data-verschieben]')){
+    const o=obj(S.aktivObjekt); let ziel=t.value; t.value=''; if(!o||!ziel) return;
+    if(ziel==='__neu'){
+      const r=await dialog('Neuer Unterordner',`<div class="feld-gitter">${feld('name','Name','',{required:true,ph:'z. B. Haus A',voll:true})}</div>`,{ok:'Anlegen und verschieben'}); if(!r) return;
+      const name=String(r.data.name||'').trim(); if(!name) return; ziel=ordnerFinden(o,name);
+    }
+    const ids=[...S.auswahl].filter(id=>elem(id)&&elem(id).objektId===o.id);
+    ids.forEach(id=>patch('elemente',id,{ordnerId:ziel==='-'?'':ziel}));
+    S.auswahl.clear(); renderAll(); toast(`${ids.length} Element${ids.length>1?'e':''} verschoben`);
+  }else if(t.matches('[data-anz]')){
+    const e=elem(t.dataset.anz); if(!e) return;
+    const n=anz({anzahl:t.value}); t.value=n; patch('elemente',e.id,{anzahl:n}); renderObjekt(); renderVorschau();
+  }else if(t.matches('[data-chk]')){
+    t.checked?S.auswahl.add(t.dataset.chk):S.auswahl.delete(t.dataset.chk); updateAuswahlBtn();
+  }else if(t.matches('[data-chk-all]')){
+    const o=obj(S.aktivObjekt); if(!o) return;
+    elementeImBlick(o).forEach(e=>t.checked?S.auswahl.add(e.id):S.auswahl.delete(e.id));
+    $$('[data-chk]').forEach(c=>c.checked=t.checked); updateAuswahlBtn();
+  }else if(t.matches('[data-foto]')){
+    const files=[...t.files]; t.value=''; fotosHinzufuegen(files);
+  }
+});
+
+function route(){
+  const m=/^#e=([A-Za-z0-9_-]+)/.exec(location.hash);
+  const q=/^#a=/.test(location.hash)?new URLSearchParams(location.hash.slice(1)):null;
+  const b=/^#b=([^&]+)/.exec(location.hash);
+  const prod=location.hash==='#produktion';
+  const scan=!prod&&!!(m||q||b);
+  document.body.classList.toggle('modus-scan',scan);
+  document.body.classList.toggle('modus-prod',prod);
+  if(!S.gestartet){
+    if(scan) $('#scan').innerHTML=`<div class="sc">${scanKopf()}<p class="sc-fehler">Daten werden geladen</p></div>`;
+    if(prod) $('#produktion').innerHTML=`<div class="pd-leer">Daten werden geladen</div>`;
+    syncStatus(); return;
+  }
+  if(prod) renderProduktion();
+  else if(scan){ window.scrollTo(0,0); b?renderScanBA(decodeURIComponent(b[1])):m?renderScan(m[1]):renderScanEnventa(q); }
+  else{ renderAll(); }
+  syncStatus();
+}
+window.addEventListener('hashchange',route);
+window.addEventListener('popstate',route);
+window.addEventListener('resize',debounce(fitSkala,120));
+
+/* ---------- Start ---------- */
+async function init(){
+  applyLayout(); route();
+  await DB.open();
+  const auth=getAuth(fbApp);
+  let gestartet=false;
+  const los=()=>{ if(!gestartet){ gestartet=true; starteListener(); } };
+  onAuthStateChanged(auth,user=>{
+    angemeldet=!!user;
+    if(user){ authFehler=null; if(gestartet&&zugriffFehler){ fehlerZurueck(); starteListener(); } else los(); }
+  });
+  signInAnonymously(auth).catch(err=>{
+    authFehler=err.code||err.message; console.warn('Anonyme Anmeldung fehlgeschlagen:',authFehler); los();
+  });
+  setTimeout(los,20000);
+}
+init().catch(err=>{ console.error(err); syncFehler(err); });
+</script>
+<script>
+setTimeout(function(){ if(!window.__peStart){ var b=document.getElementById('banner'); b.hidden=false; b.textContent='Die Datenbank-Bibliothek konnte nicht geladen werden. Bitte Internetverbindung prüfen und die Seite neu laden.'; } },10000);
+</script>
+</body>
+</html>
