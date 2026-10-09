@@ -1104,28 +1104,34 @@ async function formPlaene(form,d,e){
   }
   if(laeufe.length){ toast('Plan wird hochgeladen'); Promise.all(laeufe).then(()=>toast('Plan hochgeladen und zugewiesen'),()=>{}); }
 }
-// Ein PDF als Montage-, Detail- oder Produktionsplan eines Elements speichern (ersetzt den bisherigen)
-async function elementPlanSetzen(eid,art,file){
-  const e=elem(eid); if(!e||!ARTEN[art]||!pdfPruefen(file)) return null;
-  const alt=e[feldVon(art)];
-  const r=planHochladen(file,art,e.objektId,await file.arrayBuffer());
-  patch('elemente',e.id,{[feldVon(art)]:r.planId});
-  if(alt) planFreigeben(alt,e.id);
+// Ein PDF als Montage-, Detail- oder Produktionsplan eines oder mehrerer Elemente speichern (ersetzt den bisherigen).
+// Mehrere Elemente teilen sich dann dieselbe Datei (z. B. ein Detailplan pro Elementtyp).
+async function elementePlanSetzen(eids,art,file){
+  const els=eids.map(elem).filter(Boolean); if(!els.length||!ARTEN[art]||!pdfPruefen(file)) return null;
+  const r=planHochladen(file,art,els[0].objektId,await file.arrayBuffer());
+  const alte=new Set();
+  for(const e of els){ const alt=e[feldVon(art)]; if(alt&&alt!==r.planId) alte.add(alt); patch('elemente',e.id,{[feldVon(art)]:r.planId}); }
+  alte.forEach(pid=>planFreigeben(pid,''));
   return r;
 }
+const elementPlanSetzen=(eid,art,file)=>elementePlanSetzen([eid],art,file);
 
-/* Viele Pläne auf einmal. Der Dateiname ist normalerweise genau die Bezeichnung aus Enventa,
-   z. B. "H4C Andermatt, C5.106.001, Typ 6.4.3, Bad Typ B6.G (WC), 6.OG.pdf".
-   Reihenfolge der Prüfung: Betriebsauftrag im Namen > gleicher Name > Name enthält Bezeichnung > Nasszelle + Klammerteil. */
-function planVorschlag(name,els){
-  const fn=norm(String(name).replace(/\.pdf$/i,''));
+/* ---------- Pläne automatisch zuordnen ----------
+   1. Betriebsauftragsnr. im Dateinamen (exakte Zahl, z. B. "2026102694.pdf" oder "Produktion 2026102694 rev2.pdf")
+   2. Dateiname = Bezeichnung aus Enventa, z. B. "H4C Andermatt, C5.106.001, Typ 6.4.3, Bad Typ B6.G (WC), 6.OG.pdf"
+   3. Dateiname enthält die Bezeichnung oder Nasszelle + Klammerteil
+   4. Reicht der Name nicht: Text im PDF lesen (Plankopf) und dort Betriebsauftrag, Bezeichnung, Nasszelle suchen
+   5. Passt nur ein Elementtyp (Gewerk «Element Typ1.1 RH Vorwand WC» oder Artikel «ELE1.2-RH-WC»):
+      Vorschlag für alle Elemente dieses Typs */
+function planTreffer(roh,els,inhalt){
+  const fn=norm(roh); const zahlen=new Set(String(roh).match(/\d{6,}/g)||[]);
   const wert=e=>{
     let s=0;
-    if(e.barcode&&fn.includes(norm(e.barcode))) s+=100;
+    if(e.barcode&&zahlen.has(String(e.barcode))) s+=100;
     const bez=norm(e.bezeichnung), voll=norm(elText(e)), post=norm(e.postext);
-    if(fn&&(fn===bez||fn===voll||fn===post)) s+=80;
+    if(!inhalt&&fn&&(fn===bez||fn===voll||fn===post)) s+=80;
     else if([bez,voll,post].some(x=>x.length>=10&&fn.includes(x))) s+=60;
-    else if(fn.length>=10&&[bez,voll,post].some(x=>x.includes(fn))) s+=40;
+    else if(!inhalt&&fn.length>=10&&[bez,voll,post].some(x=>x.includes(fn))) s+=40;
     const nz=norm(e.pos||nasszelleIn(e.bezeichnung));
     if(nz.length>=4&&fn.includes(nz)){
       s+=20;
@@ -1138,30 +1144,86 @@ function planVorschlag(name,els){
   };
   const r=els.map(e=>({e,s:wert(e)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s);
   if(!r.length) return {e:null,sicher:false};
-  return {e:r[0].e,sicher:r.length===1||r[0].s>r[1].s};
+  // Im PDF-Text stehen oft mehrere Kürzel (Legende), dort gilt nur ein starker Treffer als sicher
+  const eindeutig=r.length===1||r[0].s>r[1].s;
+  return {e:r[0].e,sicher:inhalt?eindeutig&&(r[0].s>=60||r.length===1):eindeutig};
+}
+function planVorschlag(name,els){ return planTreffer(String(name).replace(/\.pdf$/i,''),els,false); }
+// Elementtyp im Text: längster passender Gewerk- oder Artikelname
+function typTreffer(roh,els){
+  const fn=norm(roh); const typen=new Map();
+  for(const e of els) for(const k of [e.gewerk,e.artikel]){ const n=norm(k); if(n.length<6) continue; if(!typen.has(n)) typen.set(n,{name:String(k).trim(),ids:new Set()}); typen.get(n).ids.add(e.id); }
+  let best=null; for(const [n,t] of typen) if(fn.includes(n)&&(!best||n.length>best.n.length)) best={n,name:t.name,ids:[...t.ids]};
+  return best;
+}
+// PDF-Text der ersten Seiten (pdf.js wird nur bei Bedarf geladen)
+let pdfjsLaden=null;
+function pdfjs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if(!pdfjsLaden) pdfjsLaden=new Promise((res,rej)=>{
+    const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=()=>{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; res(window.pdfjsLib); };
+    s.onerror=()=>{ pdfjsLaden=null; rej(new Error('pdf.js nicht ladbar')); };
+    document.head.appendChild(s);
+  });
+  return pdfjsLaden;
+}
+async function pdfText(file){
+  try{
+    const lib=await pdfjs();
+    const d=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+    let t=''; for(let i=1;i<=Math.min(d.numPages,3);i++){ const c=await (await d.getPage(i)).getTextContent(); t+=' '+c.items.map(x=>x.str).join(' '); }
+    d.destroy(); return t;
+  }catch(err){ console.warn('PDF-Text nicht lesbar',file.name,err); return ''; }
+}
+// Vorschlag für eine Datei: {ids:[…], typ?:name, quelle:'name'|'inhalt'|'typ', sicher}
+async function dateiVorschlag(f,els){
+  const v=planVorschlag(f.name,els);
+  if(v.e&&v.sicher) return {ids:[v.e.id],quelle:'name',sicher:true};
+  const text=await pdfText(f);
+  if(text){ const w=planTreffer(text,els,true); if(w.e&&w.sicher) return {ids:[w.e.id],quelle:'inhalt',sicher:true}; }
+  const t=typTreffer(f.name,els)||(text&&typTreffer(text,els));
+  if(t&&!v.e) return {ids:t.ids,typ:t.name,quelle:'typ',sicher:true};
+  if(v.e) return {ids:[v.e.id],quelle:'name',sicher:false};
+  if(text){ const w=planTreffer(text,els,true); if(w.e) return {ids:[w.e.id],quelle:'inhalt',sicher:false}; }
+  return {ids:[],sicher:false};
 }
 async function massenUpload(files,art){
   const o=obj(S.aktivObjekt); if(!o){ toast('Zuerst ein Objekt wählen'); return; }
   const pdfs=files.filter(pdfPruefen); if(!pdfs.length) return;
   const els=elementeVon(o.id);
   if(!els.length){ toast('Dieses Objekt hat noch keine Elemente. Zuerst die Excel importieren.'); return; }
-  const vs=pdfs.map(f=>planVorschlag(f.name,els));
-  const opt=sel=>`<option value="">nicht zuordnen</option>`+els.map(e=>`<option value="${e.id}" ${sel&&sel.id===e.id?'selected':''}>${h(elText(e))} · ${h(e.barcode)}</option>`).join('');
-  const nOk=vs.filter(v=>v.e&&v.sicher).length;
+  toast(`${pdfs.length} PDF${pdfs.length>1?'s':''} werden geprüft …`);
+  const vs=[]; for(const f of pdfs) vs.push(await dateiVorschlag(f,els));
+  // Auswahl: einzelne Elemente oder ganze Typen
+  const typen=new Map(); for(const e of els) if(e.gewerk){ const k=norm(e.gewerk); if(!typen.has(k)) typen.set(k,{name:e.gewerk,ids:[]}); typen.get(k).ids.push(e.id); }
+  vs.forEach(v=>{ if(v.typ){ const k=norm(v.typ); if(!typen.has(k)) typen.set(k,{name:v.typ,ids:v.ids}); } });
+  const wert=v=>v.typ?'typ:'+norm(v.typ):(v.ids[0]||'');
+  const opt=v=>{ const sel=v.sicher?wert(v):'';  // Unsichere Vorschläge nicht vorauswählen
+    return `<option value="">nicht zuordnen</option><optgroup label="Einzelnes Element">${els.map(e=>`<option value="${e.id}" ${sel===e.id?'selected':''}>${h(elText(e))} · ${h(e.barcode)}</option>`).join('')}</optgroup>
+      <optgroup label="Alle Elemente eines Typs">${[...typen].map(([k,t])=>`<option value="typ:${h(k)}" ${sel==='typ:'+k?'selected':''}>${h(t.name)} (${t.ids.length} Elemente)</option>`).join('')}</optgroup>`; };
+  const nOk=vs.filter(v=>v.ids.length&&v.sicher).length;
+  const quelle={name:'Dateiname',inhalt:'PDF-Inhalt',typ:'Elementtyp'};
   const zeilen=pdfs.map((f,i)=>{
-    const v=vs[i]; const ersetzt=v.e&&plan(v.e[feldVon(art)]);
-    const st=!v.e?'<span class="zu-nein">kein Treffer</span>':v.sicher?'<span class="zu-ok">passt</span>':'<span class="zu-pruefen">bitte prüfen</span>';
-    return `<tr><td>${h(f.name)}${ersetzt?`<br><small class="leer">ersetzt ${h(ersetzt.name)}</small>`:''}</td><td><select name="f_${i}">${opt(v.e)}</select></td><td>${st}</td></tr>`;
+    const v=vs[i]; const ersetzt=v.ids.length===1&&plan((elem(v.ids[0])||{})[feldVon(art)]);
+    const vorschlagText=v.typ?`${v.typ} (${v.ids.length} Elemente)`:v.ids.length?elText(elem(v.ids[0])||{}):'';
+    const st=!v.ids.length?'<span class="zu-nein">kein Treffer</span>':v.sicher?`<span class="zu-ok">passt</span><br><small class="leer">${quelle[v.quelle]}</small>`:`<span class="zu-pruefen">bitte wählen</span><br><small class="leer">Vorschlag: ${h(vorschlagText)}</small>`;
+    return `<tr><td>${h(f.name)}${ersetzt?`<br><small class="leer">ersetzt ${h(ersetzt.name)}</small>`:''}</td><td><select name="f_${i}">${opt(v)}</select></td><td>${st}</td></tr>`;
   }).join('');
-  const r=await dialog(`${MEHRZAHL[art]} zuordnen`,`<p><b>${nOk} von ${pdfs.length}</b> Datei${pdfs.length>1?'en':''} automatisch zugeordnet. Bei Bedarf ändern, dann «Hochladen».</p>
+  const r=await dialog(`${MEHRZAHL[art]} zuordnen`,`<p><b>${nOk} von ${pdfs.length}</b> Datei${pdfs.length>1?'en':''} automatisch zugeordnet.${nOk<pdfs.length?' Bei den übrigen das Element selbst wählen, sonst werden sie nicht hochgeladen.':''} Dann «Hochladen».</p>
     <table class="zu-tab"><thead><tr><th>Datei</th><th>Element</th><th></th></tr></thead><tbody>${zeilen}</tbody></table>`,{ok:'Hochladen',breit:true});
   if(!r) return;
+  // Einzelne Zuordnungen haben Vorrang vor Typ-Zuordnungen
+  const einzeln=new Set(pdfs.map((f,i)=>r.data[`f_${i}`]).filter(x=>x&&!x.startsWith('typ:')));
   const laeufe=[]; const doppelt=new Set();
   for(let i=0;i<pdfs.length;i++){
-    const eid=r.data[`f_${i}`]; if(!eid) continue;
-    if(doppelt.has(eid)){ toast(`${pdfs[i].name}: Element wurde schon einer anderen Datei zugeordnet, übersprungen`); continue; }
-    doppelt.add(eid);
-    const x=await elementPlanSetzen(eid,art,pdfs[i]); if(x) laeufe.push(x.done);
+    const wahl=r.data[`f_${i}`]; if(!wahl) continue;
+    let ids;
+    if(wahl.startsWith('typ:')){ const t=typen.get(wahl.slice(4)); ids=(t?t.ids:[]).filter(id=>!einzeln.has(id)&&!doppelt.has(id)); }
+    else{ if(doppelt.has(wahl)){ toast(`${pdfs[i].name}: Element wurde schon einer anderen Datei zugeordnet, übersprungen`); continue; } ids=[wahl]; }
+    if(!ids.length) continue;
+    ids.forEach(id=>doppelt.add(id));
+    const x=await elementePlanSetzen(ids,art,pdfs[i]); if(x) laeufe.push(x.done);
   }
   renderAll();
   if(laeufe.length){ toast(`${laeufe.length} ${laeufe.length>1?MEHRZAHL[art]:ARTEN[art]} werden hochgeladen`); Promise.all(laeufe).then(()=>toast(`${laeufe.length} ${laeufe.length>1?MEHRZAHL[art]:ARTEN[art]} hochgeladen`),()=>{}); }
