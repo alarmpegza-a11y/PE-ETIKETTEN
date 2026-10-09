@@ -451,7 +451,7 @@ body.modus-scan{background:var(--beton)}
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, arrayUnion, arrayRemove, Bytes } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getStorage, ref as sRef, uploadBytesResumable, getBlob, deleteObject } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js';
 window.__peStart=true;
@@ -516,7 +516,8 @@ const DB={
    - 'storage' (nach Einrichtung von Blaze + Storage): Firebase Storage, die ID ist der Pfad (enthält "/")
    Gelesen werden immer beide. */
 const istPfad=id=>String(id).includes('/');
-const TEIL=600*1024;
+// Neue Teile als Binärdaten (Bytes) statt base64-Text: spart rund 25 % Speicher. Alte base64-Teile (Feld d) bleiben lesbar.
+const TEIL=960*1024;
 function bytesToB64(u){ let s=''; for(let i=0;i<u.length;i+=0x8000) s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000)); return btoa(s); }
 function b64ToBytes(b){ const s=atob(b); const u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; }
 function putFile(path,name,type,buf){
@@ -530,7 +531,7 @@ function putFile(path,name,type,buf){
 }
 function putFileFirestore(name,type,buf){
   const id=uid(); const u=new Uint8Array(buf); const n=Math.max(1,Math.ceil(u.length/TEIL)); const ps=[];
-  for(let i=0;i<n;i++) ps.push(setDoc(doc(fs,'dateien',id,'teile',String(i)),{d:bytesToB64(u.subarray(i*TEIL,(i+1)*TEIL))}));
+  for(let i=0;i<n;i++) ps.push(setDoc(doc(fs,'dateien',id,'teile',String(i)),{b:Bytes.fromUint8Array(u.slice(i*TEIL,(i+1)*TEIL))}));
   ps.push(setDoc(ref('dateien',id),{name,type,size:u.length,chunks:n,created:Date.now()}));
   DB.put({id,name,type,data:buf}).catch(()=>{});
   const done=Promise.all(ps); fire(done);
@@ -560,7 +561,7 @@ function getFile(id){
       meldeFortschritt(id,0,n);
       const teile=await Promise.all(Array.from({length:n},(_,i)=>mitTimeout(getDoc(doc(fs,'dateien',id,'teile',String(i))),120000).then(t=>{ meldeFortschritt(id,++fertig,n); return t; })));
       if(teile.some(t=>!t.exists())){ DATEI_FEHLER.set(id,'unvollstaendig'); return null; }
-      const parts=teile.map(t=>b64ToBytes(t.data().d)); const total=parts.reduce((a,x)=>a+x.length,0);
+      const parts=teile.map(t=>{ const x=t.data(); return x.b?x.b.toUint8Array():b64ToBytes(x.d); }); const total=parts.reduce((a,x)=>a+x.length,0);
       const u=new Uint8Array(total); let o=0; parts.forEach(x=>{ u.set(x,o); o+=x.length; });
       const f={id,name:md.name,type:md.type,data:u.buffer}; DB.put(f).catch(()=>{}); return f;
     }catch(err){ console.warn('Datei nicht ladbar',id,err); DATEI_FEHLER.set(id,'netz'); return null; }
@@ -834,7 +835,7 @@ function renderObjektListe(){
     const aktiv=o.id===S.aktivObjekt; const tage=restTage(o);
     return `<button class="obj-item${aktiv?' aktiv':''}" data-obj="${o.id}" ${aktiv?'aria-current="true"':''}>
       <span class="obj-name">${h(o.name)}</span><span class="obj-sub">${h(o.kunde||'Ohne Kunde')}${o.auftragNr?` · ${h(o.auftragNr)}`:''}</span><span class="obj-count" title="Elemente">${n}</span>
-      ${tage!=null&&tage<=14?`<span class="obj-frist">wird in ${tage} Tag${tage===1?'':'en'} gelöscht</span>`:''}</button>
+      ${tage!=null&&tage<=14?`<span class="obj-frist">wird in ${tage} Tag${tage===1?'':'en'} gelöscht, vorher «Montage speichern»</span>`:''}</button>
       ${aktiv?ordnerListe(o):''}`;
   }).join(''):alle.length?'<p class="leer">Kein Objekt gefunden.</p>':'<p class="leer">Noch kein Objekt vorhanden.</p>';
 }
@@ -959,6 +960,7 @@ function renderObjekt(){
           <select class="btn" data-verschieben id="selVerschieben" ${S.auswahl.size?'':'disabled'} aria-label="Auswahl in Unterordner verschieben">
             <option value="">Auswahl verschieben nach …</option>${(o.ordner||[]).map(x=>`<option value="${x.id}">${h(x.name)}</option>`).join('')}<option value="-">Ohne Unterordner</option><option value="__neu">Neuer Unterordner …</option></select>
           ${nFotos?`<button class="btn" data-galerie="objekt:${o.id}">Alle Fotos (${nFotos})</button>`:''}
+          <button class="btn" data-act="montageSichern" ${els.length?'':'disabled'} title="Alle Montagefotos und die Montageliste dieses ${ordTitel?'Unterordners':'Objekts'} speichern">Montage speichern${nFotos?` (${nFotos} Fotos)`:''}</button>
           <button class="btn primary" data-act="druckAlle" ${els.length?'':'disabled'}>Alle Etiketten drucken (${nEtiketten})</button>
           <button class="btn" data-act="neuesElement">Element hinzufügen</button>
         </div></div>
@@ -1074,10 +1076,20 @@ function elementForm(e,o){
   </div>`;
 }
 const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-function planHochladen(file,art,objektId,buf){
-  const id=uid();
+// Gleiche Datei (gleicher SHA-256-Fingerabdruck) wird nur einmal gespeichert, weitere Pläne verweisen auf dieselbe Datei
+async function fingerabdruck(buf){
+  try{ const d=await crypto.subtle.digest('SHA-256',buf); return [...new Uint8Array(d)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+  catch(e){ return ''; }
+}
+async function planHochladen(file,art,objektId,buf){
+  const id=uid(); const hash=await fingerabdruck(buf);
+  const gleich=hash&&S.plaene.find(x=>x.hash===hash&&x.fileId&&x.fertig!==false);
+  if(gleich){
+    savePlan({id,objektId,art,name:file.name,fileId:gleich.fileId,hash,url:'',size:file.size,created:Date.now(),fertig:true});
+    return {planId:id,done:Promise.resolve()};
+  }
   const r=putFile(`plaene/${objektId}/${id}.pdf`,file.name,'application/pdf',buf);
-  const p={id,objektId,art,name:file.name,fileId:r.id,url:'',size:file.size,created:Date.now(),fertig:false};
+  const p={id,objektId,art,name:file.name,fileId:r.id,hash,url:'',size:file.size,created:Date.now(),fertig:false};
   savePlan(p); r.done.then(()=>patch('plaene',p.id,{fertig:true}),()=>{});
   return {planId:p.id,done:r.done};
 }
@@ -1098,7 +1110,7 @@ async function formPlaene(form,d,e){
     const inp=form.querySelector(`[name=neu_${art}]`); const f=inp&&inp.files[0];
     if(f&&pdfPruefen(f)){
       const alt=e[feldVon(art)];
-      const r=planHochladen(f,art,e.objektId,await f.arrayBuffer()); d[feldVon(art)]=r.planId; laeufe.push(r.done);
+      const r=await planHochladen(f,art,e.objektId,await f.arrayBuffer()); d[feldVon(art)]=r.planId; laeufe.push(r.done);
       if(alt&&alt!==r.planId) setTimeout(()=>planFreigeben(alt,e.id),0);
     }
   }
@@ -1108,7 +1120,7 @@ async function formPlaene(form,d,e){
 // Mehrere Elemente teilen sich dann dieselbe Datei (z. B. ein Detailplan pro Elementtyp).
 async function elementePlanSetzen(eids,art,file){
   const els=eids.map(elem).filter(Boolean); if(!els.length||!ARTEN[art]||!pdfPruefen(file)) return null;
-  const r=planHochladen(file,art,els[0].objektId,await file.arrayBuffer());
+  const r=await planHochladen(file,art,els[0].objektId,await file.arrayBuffer());
   const alte=new Set();
   for(const e of els){ const alt=e[feldVon(art)]; if(alt&&alt!==r.planId) alte.add(alt); patch('elemente',e.id,{[feldVon(art)]:r.planId}); }
   alte.forEach(pid=>planFreigeben(pid,''));
@@ -1358,7 +1370,8 @@ function elementLoeschen(e){
   plaene.forEach(pid=>planFreigeben(pid,e.id));
 }
 function planLoeschenIntern(p){
-  if(p.fileId) delFile(p.fileId);
+  // Die Datei nur löschen, wenn kein anderer Plan dieselbe Datei verwendet
+  if(p.fileId&&!S.plaene.some(x=>x.id!==p.id&&x.fileId===p.fileId)) delFile(p.fileId);
   entferne('plaene',p.id);
   for(const e of S.elemente){
     const f={};
@@ -1419,6 +1432,24 @@ const ACT={
   },
   druckEins(){ const e=elem(S.aktivElement); if(e) drucken([e]); },
   druckAlle(){ const o=obj(S.aktivObjekt); if(o) drucken(elementeImBlick(o)); },
+  // Montage speichern: Fotos in Ordnern pro Element + Montageliste (CSV für Excel), für das Objekt oder den offenen Unterordner
+  async montageSichern(){
+    const o=obj(S.aktivObjekt); if(!o) return;
+    const els=elementeImBlick(o); const nF=els.reduce((a,e)=>a+(e.fotos||[]).length,0);
+    const ordAkt=(o.ordner||[]).find(x=>x.id===S.aktivOrdner);
+    montageZiel={o,els,alle:S.aktivOrdner==='*',titel:o.name+(ordAkt?' › '+ordAkt.name:S.aktivOrdner==='-'?' › Ohne Unterordner':'')};
+    const ordnerGeht=typeof window.showDirectoryPicker==='function';
+    const r=await dialog('Montage speichern',`<p><b>${h(montageZiel.titel)}</b>: ${els.length} Element${els.length===1?'':'e'}, ${nF} Foto${nF===1?'':'s'}.</p>
+      <p class="leer">Gespeichert werden ein Ordner pro Unterordner und Element mit den Fotos sowie die Montageliste (Status, montiert am, von wem) als Datei für Excel.</p>
+      ${ordnerGeht?`<p><button type="button" class="btn primary" data-act="montageInOrdner">In Ordner speichern (z. B. Laufwerk) …</button></p><p class="leer">Du wählst einen Ordner, z. B. auf dem Laufwerk. Darin wird alles direkt abgelegt.</p>`:''}`,{ok:'Als ZIP herunterladen'});
+    if(!r) return;
+    await montageExport(null);
+  },
+  async montageInOrdner(){
+    let dir; try{ dir=await window.showDirectoryPicker({mode:'readwrite'}); }catch(err){ if(err&&err.name!=='AbortError') toast('Ordner nicht verfügbar, bitte «Als ZIP herunterladen» verwenden'); return; }
+    const d=$('#dlg'); if(d.open) d.close();
+    await montageExport(dir);
+  },
   objektBehalten(){
     const o=obj(S.aktivObjekt); if(!o) return; const m=aufbewahrMonate()||3;
     const bis=plusMonate(Math.max(Date.now(),loeschDatum(o)||Date.now()),m);
@@ -1427,7 +1458,8 @@ const ACT={
   async objektLoeschenKnopf(){
     const o=obj(S.aktivObjekt); if(!o) return;
     const n=S.elemente.filter(e=>e.objektId===o.id).length;
-    if(!await bestaetigen('Objekt löschen?',`«${o.name}» wird mit ${n} Element${n===1?'':'en'}, allen Unterordnern, Plänen und Fotos für alle Benutzer gelöscht. Das kann nicht rückgängig gemacht werden.`,'Objekt löschen')) return;
+    const nf=S.elemente.filter(e=>e.objektId===o.id).reduce((a,e)=>a+(e.fotos||[]).length,0);
+    if(!await bestaetigen('Objekt löschen?',`«${o.name}» wird mit ${n} Element${n===1?'':'en'}, allen Unterordnern, Plänen und ${nf} Foto${nf===1?'':'s'} für alle Benutzer gelöscht. Das kann nicht rückgängig gemacht werden.${nf?' Tipp: Vorher mit «Montage speichern» die Fotos sichern.':''}`,'Objekt löschen')) return;
     objektLoeschen(o); S.aktivObjekt=ersteObjektId(); S.aktivOrdner='*'; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast('Objekt gelöscht');
   },
   async ordnerNeu(){
@@ -1757,10 +1789,11 @@ async function renderFotos(e){
 async function komprimieren(file){
   try{
     const img=await createImageBitmap(file);
+    // 1600 px und JPEG 0.7: gut lesbar und zoombar, rund 150 bis 300 KB pro Foto
     const max=1600, f=Math.min(1,max/Math.max(img.width,img.height));
     const c=document.createElement('canvas'); c.width=Math.round(img.width*f); c.height=Math.round(img.height*f);
     c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-    const b=await new Promise(res=>c.toBlob(res,'image/jpeg',0.8));
+    const b=await new Promise(res=>c.toBlob(res,'image/jpeg',0.7));
     return b||file;
   }catch(err){ return file; }
 }
@@ -1803,6 +1836,60 @@ async function fotoLoeschen(fid){
   delFile(fid); renderScanElement(e);
 }
 
+
+/* ---------- Montage speichern (Fotos + Liste) ---------- */
+let montageZiel=null;
+const dateiname=t=>String(t||'').replace(/[\\/:*?"<>|\r\n]+/g,' ').replace(/\s+/g,' ').trim().slice(0,90).replace(/[. ]+$/,'')||'ohne Name';
+let jszipLaden=null;
+function jszip(){
+  if(window.JSZip) return Promise.resolve(window.JSZip);
+  if(!jszipLaden) jszipLaden=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'; s.onload=()=>res(window.JSZip); s.onerror=()=>{ jszipLaden=null; rej(new Error('JSZip nicht ladbar')); }; document.head.appendChild(s); });
+  return jszipLaden;
+}
+function montageListe(o,els){
+  const ordName=e=>((o.ordner||[]).find(x=>x.id===e.ordnerId)||{}).name||'';
+  const zeilen=[['Unterordner','Position','Bezeichnung','Element','Betriebsauftrag','Auftrag','Status','Montiert am','Montiert von','Fotos']];
+  for(const e of els) zeilen.push([ordName(e),e.fixpos?`Pos. ${e.fixpos}`:'',elText(e),e.gewerk||'',e.barcode||'',e.auftragNr||o.auftragNr||'',STATUS[e.status]||'Geplant',e.montiert?fmtTs(e.montiert.am):'',e.montiert?e.montiert.von||'':'',(e.fotos||[]).length]);
+  // Semikolon und BOM, damit Excel (CH) Umlaute und Spalten richtig öffnet
+  return '\ufeff'+zeilen.map(z=>z.map(x=>{ const v=String(x); return /[;"\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(';')).join('\r\n');
+}
+async function montageExport(dir){
+  const z=montageZiel; if(!z) return; const {o,els}=z;
+  const ordName=e=>((o.ordner||[]).find(x=>x.id===e.ordnerId)||{}).name||'';
+  // Unterordner-Ebene nur, wenn das ganze Objekt gespeichert wird (im Unterordner steckt sein Name schon im Hauptordner)
+  const mitOrdner=(o.ordner||[]).length>0&&z.alle;
+  const dateien=[]; // {pfad:[…], name, blob|text}
+  dateien.push({pfad:[],name:'Montageliste.csv',text:montageListe(o,els)});
+  const fotos=[]; for(const e of els) (e.fotos||[]).slice().sort((a,b)=>(a.ts||0)-(b.ts||0)).forEach((f,i)=>fotos.push({e,f,i}));
+  let fertig=0, fehlt=0; toast(`Fotos werden geladen: 0 von ${fotos.length}`);
+  for(const {e,f,i} of fotos){
+    const d=await getFile(f.id); fertig++;
+    if(fertig%5===0||fertig===fotos.length) toast(`Fotos werden geladen: ${fertig} von ${fotos.length}`);
+    if(!d){ fehlt++; continue; }
+    const datum=f.ts?new Date(f.ts).toISOString().slice(0,10):'';
+    dateien.push({pfad:[...(mitOrdner?[dateiname(ordName(e)||'Ohne Unterordner')]:[]),dateiname(`${elText(e)} (${e.barcode})`)],
+      name:dateiname(`${datum} Foto ${i+1}${f.von?' '+f.von:''}`)+'.jpg',blob:new Blob([d.data],{type:d.type||'image/jpeg'})});
+  }
+  const wurzel=dateiname(z.titel.replace('›','-'));
+  try{
+    if(dir){
+      const basis=await dir.getDirectoryHandle(wurzel,{create:true});
+      for(const x of dateien){
+        let h2=basis; for(const teil of x.pfad) h2=await h2.getDirectoryHandle(teil,{create:true});
+        const fh=await h2.getFileHandle(x.name,{create:true}); const w=await fh.createWritable();
+        await w.write(x.blob||new Blob([x.text],{type:'text/csv'})); await w.close();
+      }
+      toast(`Gespeichert im Ordner «${wurzel}»: ${dateien.length-1} Fotos und die Montageliste${fehlt?`, ${fehlt} Fotos nicht ladbar`:''}`);
+    }else{
+      const JSZip=await jszip(); const zip=new JSZip(); const root=zip.folder(wurzel);
+      for(const x of dateien){ let f2=root; for(const teil of x.pfad) f2=f2.folder(teil); f2.file(x.name,x.blob||x.text); }
+      const blob=await zip.generateAsync({type:'blob',compression:'STORE'});
+      const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=wurzel+'.zip'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      toast(`ZIP mit ${dateien.length-1} Fotos und der Montageliste wird heruntergeladen${fehlt?`, ${fehlt} Fotos nicht ladbar`:''}`);
+    }
+  }catch(err){ console.error(err); toast('Speichern fehlgeschlagen: '+(err.message||err)); }
+}
 
 /* ---------- Fotos ansehen: Galerie pro Element (oder ganzer Auftrag) und Grossansicht ---------- */
 const GAL_URLS=[]; const LB={bilder:[],i:0};
