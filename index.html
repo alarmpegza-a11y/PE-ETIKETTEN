@@ -83,6 +83,11 @@ select.btn{appearance:auto;padding-right:.4em}
 .obj-item.aktiv{background:var(--blau-hell);border-left-color:var(--blau)}
 .obj-name{font-weight:700;font-size:14px;line-height:1.25}
 .obj-sub{grid-column:1;font-size:13px;color:var(--stahl)}
+.obj-suche{width:100%;border:1px solid var(--linie);border-radius:6px;padding:.5em .7em;margin:0 0 10px;background:#fff;min-height:38px}
+.obj-suche:focus{border-color:var(--blau);outline:2px solid var(--blau-hell);outline-offset:0}
+.obj-frist{grid-column:1;font-size:12px;font-weight:600;color:var(--rot)}
+.frist{color:var(--amber)}
+.frist.bald{color:var(--rot)}
 .obj-count{grid-row:1/3;grid-column:2;align-self:center;font-size:12px;font-weight:700;color:var(--stahl);background:var(--beton);border-radius:10px;padding:1px 8px}
 .obj-item.aktiv .obj-count{background:#fff;color:var(--blau)}
 main{padding:26px 30px 60px;min-width:0}
@@ -417,6 +422,7 @@ body.modus-scan{background:var(--beton)}
   <div class="app">
     <aside class="seite">
       <div class="seite-kopf"><h2>Objekte</h2><span class="seite-akt"><label class="btn sm primary">Excel importieren<input type="file" accept=".xlsx,.xls,.csv" hidden data-excel></label><button class="btn sm" data-act="neuesObjekt">Neues Objekt</button></span></div>
+      <input id="objSuche" class="obj-suche" type="search" placeholder="Objekt, Auftrag, Betriebsauftrag suchen …" aria-label="Objekte suchen" autocomplete="off">
       <nav id="objektListe" aria-label="Objekte"></nav>
     </aside>
     <main id="objektBereich"><p class="leer">Verbindung zur Datenbank wird aufgebaut</p></main>
@@ -658,6 +664,7 @@ function starteListener(){
       if(geaendert||!bereit[name]) S[name]=snap.docs.map(d=>({...d.data(),id:d.id}));
       if(!bereit[name]){ bereit[name]=true; pruefeStart(); }
       else if(geaendert) planRender();
+      pruefeAufbewahrung();
     },syncFehler));
   }
   abmelden.push(onSnapshot(ref('settings','app'),{includeMetadataChanges:true},snap=>{
@@ -665,6 +672,7 @@ function starteListener(){
     S.settings=snap.exists()?snap.data():{};
     qrCache.clear(); applyLogo(); applyLayout();
     if(!bereit.settings){ bereit.settings=true; pruefeStart(); } else planRender();
+    pruefeAufbewahrung();
   },syncFehler));
 }
 function pruefeStart(){
@@ -819,16 +827,51 @@ function renderIntro(){
 
 function renderObjektListe(){
   const list=$('#objektListe');
-  const obs=[...S.objekte].sort((a,b)=>(a.created||0)-(b.created||0));
+  const alle=[...S.objekte].sort((a,b)=>(a.created||0)-(b.created||0));
+  const obs=alle.filter(objektPasst);
   list.innerHTML=obs.length?obs.map(o=>{
     const n=S.elemente.filter(e=>e.objektId===o.id).length;
-    const aktiv=o.id===S.aktivObjekt;
+    const aktiv=o.id===S.aktivObjekt; const tage=restTage(o);
     return `<button class="obj-item${aktiv?' aktiv':''}" data-obj="${o.id}" ${aktiv?'aria-current="true"':''}>
-      <span class="obj-name">${h(o.name)}</span><span class="obj-sub">${h(o.kunde||'Ohne Kunde')}</span><span class="obj-count" title="Elemente">${n}</span></button>
+      <span class="obj-name">${h(o.name)}</span><span class="obj-sub">${h(o.kunde||'Ohne Kunde')}${o.auftragNr?` · ${h(o.auftragNr)}`:''}</span><span class="obj-count" title="Elemente">${n}</span>
+      ${tage!=null&&tage<=14?`<span class="obj-frist">wird in ${tage} Tag${tage===1?'':'en'} gelöscht</span>`:''}</button>
       ${aktiv?ordnerListe(o):''}`;
-  }).join(''):'<p class="leer">Noch kein Objekt vorhanden.</p>';
+  }).join(''):alle.length?'<p class="leer">Kein Objekt gefunden.</p>':'<p class="leer">Noch kein Objekt vorhanden.</p>';
+}
+// Suche: Objektname, Kunde, Auftragsnr., Unterordner, Betriebsauftrag oder Bezeichnung eines Elements
+function objektPasst(o){
+  const q=norm($('#objSuche')&&$('#objSuche').value);
+  if(!q) return true;
+  const t=[o.name,o.kunde,o.auftragNr,o.strasse,o.plzOrt,...(o.ordner||[]).map(x=>x.name)].map(norm).join(' ');
+  if(t.includes(q)) return true;
+  return S.elemente.some(e=>e.objektId===o.id&&(norm(e.barcode).includes(q)||norm(e.auftragNr).includes(q)||norm(e.bezeichnung).includes(q)));
 }
 
+/* ---------- Aufbewahrung: Objekte werden X Monate nach dem Anlegen automatisch gelöscht ----------
+   Standard 3 Monate (Einstellungen, 0 = nie). «Behalten» verschiebt die Frist (behaltenBis).
+   Gelöscht wird nur in der Büro-Ansicht und erst, wenn alle Daten frisch vom Server da sind (nicht aus dem Offline-Cache). */
+const aufbewahrMonate=()=>{ const n=parseInt(S.settings.aufbewahrung,10); return isFinite(n)&&n>=0?n:3; };
+const plusMonate=(ts,m)=>{ const d=new Date(ts); d.setMonth(d.getMonth()+m); return d.getTime(); };
+function loeschDatum(o){
+  if(o.behaltenBis) return o.behaltenBis;
+  const m=aufbewahrMonate(); if(!m||!o.created) return null;
+  return plusMonate(o.created,m);
+}
+function restTage(o){ const d=loeschDatum(o); return d==null?null:Math.max(0,Math.ceil((d-Date.now())/864e5)); }
+const fmtDatum=ts=>new Date(ts).toLocaleDateString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric'});
+let aufbewahrungGeprueft=false;
+function pruefeAufbewahrung(){
+  if(aufbewahrungGeprueft||!S.gestartet||!navigator.onLine) return;
+  if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
+  if(!['objekte','elemente','plaene','settings'].every(k=>meta[k]&&!meta[k].fromCache)) return;
+  aufbewahrungGeprueft=true;
+  const alt=S.objekte.filter(o=>{ const d=loeschDatum(o); return d!=null&&d<Date.now(); });
+  if(!alt.length) return;
+  alt.forEach(objektLoeschen);
+  if(!obj(S.aktivObjekt)){ S.aktivObjekt=ersteObjektId(); S.aktivOrdner='*'; S.aktivElement=null; }
+  renderAll();
+  toast(`${alt.length} Objekt${alt.length>1?'e':''} nach Ablauf der Aufbewahrungsfrist gelöscht: ${alt.map(o=>o.name).join(', ')}`);
+}
 function ordnerListe(o){
   const ord=o.ordner||[]; const els=S.elemente.filter(e=>e.objektId===o.id);
   const zahl=id=>els.filter(e=>imOrdner(e,id)).length;
@@ -900,6 +943,7 @@ function renderObjekt(){
         <div><dt>Adresse</dt><dd>${[o.strasse,o.plzOrt].filter(Boolean).map(h).join(', ')||'–'}</dd></div>
         <div><dt>Auftrag</dt><dd>${h(o.auftragNr)||'–'}</dd></div>
         <div><dt>Lieferdatum</dt><dd>${fmt(o.lieferdatum)}</dd></div>
+        ${loeschDatum(o)!=null?`<div><dt>Automatisch gelöscht am</dt><dd class="frist${restTage(o)<=14?' bald':''}">${fmtDatum(loeschDatum(o))} <button class="btn sm" data-act="objektBehalten" title="Frist um ${aufbewahrMonate()||3} Monate verlängern">Behalten</button></dd></div>`:''}
       </dl></div>
       <div class="block-aktionen">
         ${ordAkt?`<button class="btn" data-act="ordnerUmbenennen">Unterordner umbenennen</button><button class="btn danger" data-act="ordnerLoeschen">Unterordner löschen</button>`:''}
@@ -1172,8 +1216,11 @@ async function importExcel(file){
   }
   if(!zeilen.length){ toast('Keine Zeilen mit Betriebsauftrag gefunden'); return; }
   // 2. Ziel wählen: Objekt (automatisch nach Auftragsnr. oder ein bestehendes) und optional ein Unterordner
-  const schonDa=zeilen.map(z=>elem('ba_'+z.ba)).find(Boolean);
-  const vorschlag=(schonDa&&obj(schonDa.objektId))||findeObjekt(zeilen[0].auftragNr);
+  // Vorschlag: das Objekt und der Unterordner, die gerade offen sind. Erst ohne offenes Objekt nach Auftragsnr. suchen.
+  const offen=obj(S.aktivObjekt);
+  const offenOrdner=offen&&(offen.ordner||[]).find(x=>x.id===S.aktivOrdner);
+  const schonDa=zeilen.map(z=>elem('ba_'+z.ba)).filter(Boolean);
+  const vorschlag=offen||(schonDa[0]&&obj(schonDa[0].objektId))||findeObjekt(zeilen[0].auftragNr);
   const projekt=String(w(zeilen[0].r,'projektname')||zeilen[0].b.projekt||'').trim();
   const ordnerNamen=[...new Set(S.objekte.flatMap(o=>(o.ordner||[]).map(x=>x.name)))];
   const obs=[...S.objekte].sort((a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true}));
@@ -1183,9 +1230,11 @@ async function importExcel(file){
         <option value="__auto" ${vorschlag?'':'selected'}>Automatisch nach Auftragsnummer${vorschlag?'':` (neues Objekt «${h(projekt||zeilen[0].auftragNr)}»)`}</option>
         ${obs.map(o=>`<option value="${o.id}" ${vorschlag&&vorschlag.id===o.id?'selected':''}>${h(o.name)}${o.auftragNr?` · Auftrag ${h(o.auftragNr)}`:''}</option>`).join('')}
       </select></label>
-      <label class="feld voll"><span>Unterordner (optional, z. B. Haus A)</span><input name="ordner" list="ordnerVorschlaege" placeholder="leer lassen = kein Unterordner" autocomplete="off">
+      <label class="feld voll"><span>Unterordner (optional, z. B. Haus A)</span><input name="ordner" list="ordnerVorschlaege" value="${h(offenOrdner?offenOrdner.name:'')}" placeholder="leer lassen = kein Unterordner" autocomplete="off">
         <datalist id="ordnerVorschlaege">${ordnerNamen.map(n=>`<option value="${h(n)}">`).join('')}</datalist></label>
     </div>
+    ${(()=>{ const woanders=schonDa.filter(e=>!vorschlag||e.objektId!==vorschlag.id); const o2=woanders[0]&&obj(woanders[0].objektId);
+      return woanders.length?`<p class="hinweis">${woanders.length} dieser Elemente sind bereits im Objekt «${h(o2?o2.name:'?')}»${o2&&o2.auftragNr?` (Auftrag ${h(o2.auftragNr)})`:''}. Sie werden ins gewählte Objekt verschoben, ihre Pläne und Fotos kommen mit.</p>`:''; })()}
     <p class="leer">Gleiche Betriebsaufträge werden aktualisiert, nicht doppelt angelegt. Pläne, Anzahl, Status und Fotos bleiben erhalten.</p>`,{ok:'Importieren'});
   if(!ziel) return;
   const festesObjekt=ziel.data.ziel!=='__auto'?obj(ziel.data.ziel):null;
@@ -1213,6 +1262,8 @@ async function importExcel(file){
       artikel:String(w(z.r,'artikel')).trim(),lieferdatum:z.lief};
     if(a.ordnerId) x.ordnerId=a.ordnerId;
     const vorh=elem(x.id);
+    // Wechselt das Element das Objekt, ziehen seine Pläne mit
+    if(vorh&&vorh.objektId!==a.o.id) Object.keys(ARTEN).forEach(art=>{ const pid=vorh[feldVon(art)]; if(plan(pid)) patch('plaene',pid,{objektId:a.o.id}); });
     if(vorh) aktualisiert++; else { neu++; x.anzahl=Math.max(1,Math.round(Number(w(z.r,'menge bestellt'))||1)); x.created=Date.now(); }
     anlegen('elemente',x,vorh||elemVorgabe());
   }
@@ -1255,7 +1306,9 @@ function planLoeschenIntern(p){
 }
 function objektLoeschen(o){
   S.elemente.filter(x=>x.objektId===o.id).forEach(elementLoeschen);
-  S.plaene.filter(x=>x.objektId===o.id).forEach(planLoeschenIntern);
+  // Pläne, die noch ein Element in einem anderen Objekt braucht, bleiben stehen
+  const gebraucht=new Set(S.elemente.filter(e=>e.objektId!==o.id).flatMap(e=>Object.keys(ARTEN).map(a=>e[feldVon(a)])));
+  S.plaene.filter(x=>x.objektId===o.id&&!gebraucht.has(x.id)).forEach(planLoeschenIntern);
   entferne('objekte',o.id);
 }
 
@@ -1304,6 +1357,11 @@ const ACT={
   },
   druckEins(){ const e=elem(S.aktivElement); if(e) drucken([e]); },
   druckAlle(){ const o=obj(S.aktivObjekt); if(o) drucken(elementeImBlick(o)); },
+  objektBehalten(){
+    const o=obj(S.aktivObjekt); if(!o) return; const m=aufbewahrMonate()||3;
+    const bis=plusMonate(Math.max(Date.now(),loeschDatum(o)||Date.now()),m);
+    patch('objekte',o.id,{behaltenBis:bis}); renderAll(); toast(`Objekt bleibt bis ${fmtDatum(bis)}`);
+  },
   async objektLoeschenKnopf(){
     const o=obj(S.aktivObjekt); if(!o) return;
     const n=S.elemente.filter(e=>e.objektId===o.id).length;
@@ -1354,6 +1412,8 @@ const ACT={
       <div class="feld voll"><span>Firmenlogo auf der Etikette</span><div class="logo-vorschau">${logoMarkup()}</div>
         <input type="file" name="logoFile" accept="image/png,image/jpeg,image/svg+xml,image/webp">
         <label class="check"><input type="checkbox" name="logoReset" ${S.settings.logo?'':'disabled'}> Standardlogo verwenden</label></div>
+      ${feld('aufbewahrung','Objekte automatisch löschen nach (Monaten)',String(aufbewahrMonate()),{type:'number'})}
+      <p class="leer" style="align-self:end">Gezählt ab dem Anlegen des Objekts. 0 = nie automatisch löschen. Pro Objekt verlängerbar mit «Behalten».</p>
       ${feld('fotoCode','Code für Fotos (Monteure)',fotoCodeSoll(),{ph:'8852'})}
       <p class="leer" style="align-self:end">Monteure geben den Code einmal pro Handy ein. Nach einer Änderung ist er auf allen Handys neu nötig.</p>
       <div class="feld voll"><span>Speicherort für Pläne und Fotos</span>
@@ -1365,6 +1425,7 @@ const ACT={
     const url=String(r.data.baseUrl||'').trim().split('#')[0];
     const f={baseUrl:url||'',speicher:r.data.speicherStorage?'storage':'firestore'};
     const code=String(r.data.fotoCode||'').trim(); if(code) f.fotoCode=code;
+    const mon=parseInt(r.data.aufbewahrung,10); f.aufbewahrung=isFinite(mon)&&mon>=0?mon:3;
     const lf=r.form.querySelector('[name=logoFile]').files[0];
     if(r.data.logoReset) f.logo='';
     else if(lf){ if(lf.size>600*1024){ toast('Logo ist zu gross (max. 600 KB)'); } else f.logo=await fileToDataUrl(lf); }
@@ -1847,6 +1908,7 @@ function zeileWaehlen(row){
 }
 document.addEventListener('input',ev=>{
   if(ev.target.id==='monteurName') LS.set('monteur',ev.target.value.trim());
+  if(ev.target.id==='objSuche') renderObjektListe();
   if(ev.target.matches('[data-layout]')&&layoutVorschau) layoutVorschau();
 });
 document.addEventListener('change',async ev=>{
