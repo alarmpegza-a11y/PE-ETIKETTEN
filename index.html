@@ -325,7 +325,16 @@ body:not(.modus-prod) #produktion{display:none}
 body.modus-scan #admin{display:none}
 body:not(.modus-scan) #scan{display:none}
 body.modus-scan{background:var(--beton)}
-.sc{max-width:600px;margin:0 auto;min-height:100vh;background:var(--beton)}
+.sc{max-width:600px;margin:0 auto;min-height:100vh;background:var(--beton);overflow-x:hidden}
+/* Handy: Seite darf nicht breiter als der Bildschirm werden, und iOS zoomt bei Eingabefeldern unter 16 px automatisch hinein */
+html:has(body.modus-scan),body.modus-scan{overflow-x:hidden;max-width:100%}
+.sc input,.sc select,.sc textarea,#codeDlg input{font-size:16px}
+.sc *{min-width:0}
+.sc-held h1,.sc-daten dd,.pk-text span,.pk-text strong,.foto figcaption{overflow-wrap:anywhere}
+.sc-daten{grid-template-columns:auto minmax(0,1fr)}
+.code-fenster{display:grid;gap:12px}
+.code-fenster input{font-size:24px!important;letter-spacing:.3em;text-align:center;border:1px solid var(--linie);border-radius:8px;padding:.5em;width:100%}
+.code-fenster .fehler{color:var(--rot);font-size:14px;font-weight:600;min-height:1.2em;margin:0}
 .sc-kopf{background:#fff;padding:14px 18px;padding-top:calc(14px + env(safe-area-inset-top,0px));border-bottom:1px solid var(--linie)}
 .sc-kopf .logo-svg,.sc-kopf .logo-img{display:block;width:190px;height:auto;max-height:44px;object-fit:contain;object-position:left}
 .sc-held{background:var(--blau);color:#fff;padding:22px 18px 24px}
@@ -688,10 +697,8 @@ const planRender=debounce(()=>{
     const e=elem(S.scanElement);
     if(!e){ route(); return; }
     const fokus=document.activeElement&&document.activeElement.id==='monteurName';
-    const code=$('#fotoCode'), codeWert=code?code.value:'', codeFokus=document.activeElement===code&&!!code;
     renderScanElement(e);
     if(fokus){ const i=$('#monteurName'); if(i){ i.focus(); const l=i.value.length; i.setSelectionRange(l,l); } }
-    const c2=$('#fotoCode'); if(c2){ c2.value=codeWert; if(codeFokus) c2.focus(); }
   }else{
     if(!obj(S.aktivObjekt)) S.aktivObjekt=ersteObjektId();
     renderAll();
@@ -1552,7 +1559,6 @@ const ACT={
     const e=elem(S.scanElement); if(!e) return;
     const inp=$('#monteurName'); const von=(inp&&inp.value||'').trim();
     if(!von){ toast('Bitte zuerst deinen Namen eintragen'); if(inp) inp.focus(); return; }
-    LS.set('monteur',von);
     patch('elemente',e.id,{status:'montiert',montiert:{am:Date.now(),von}}); toast('Als montiert gemeldet'); renderScanElement(e);
   },
   montageZurueck(){
@@ -1674,24 +1680,22 @@ function renderScanElement(e){
     </section>
     <dl class="sc-daten">
       ${zeile('Objekt',o.name)}${zeile('Kunde',o.kunde)}${zeile('Adresse',[o.strasse,o.plzOrt].filter(Boolean).join(', '))}
-      ${zeile('Geschoss',e.geschoss)}${zeile('Lieferdatum',fmt(lief(e)))}${zeile('Auftrag',o.auftragNr)}${zeile('Betriebsauftrag',e.barcode)}
+      ${zeile('Geschoss',e.geschoss)}${zeile('Lieferdatum',fmt(lief(e)))}${zeile('Auftrag',e.auftragNr||o.auftragNr)}
     </dl>
     <section class="sc-block"><h2>Pläne</h2><div id="pkMontage"></div><div id="pkDetail"></div></section>
     <section class="sc-block"><h2>Montage</h2>
       <div class="sc-stapel">
-        <label class="feld"><span>Monteur</span><input id="monteurName" value="${h(LS.get('monteur','')||'')}" placeholder="Vor- und Nachname" autocomplete="name"></label>
+        <label class="feld"><span>Monteur</span><input id="monteurName" value="" placeholder="Vor- und Nachname" autocomplete="off"></label>
         ${e.montiert?`<div class="sc-montiert">Montiert am ${fmtTs(e.montiert.am)}<small>gemeldet von ${h(e.montiert.von||'–')}</small></div>
           <button class="btn" data-act="montageZurueck">Meldung zurücknehmen</button>`
         :`<button class="btn primary gross" data-act="montiertMelden">Als montiert melden</button>`}
       </div>
     </section>
     <section class="sc-block"><h2>Fotos vom montierten Element <span class="zahl">${(e.fotos||[]).length}</span></h2>
-      ${fotoFrei()?`<div class="sc-zwei">
-        <label class="btn primary gross">Foto aufnehmen<input type="file" accept="image/*" capture="environment" hidden data-foto></label>
-        <label class="btn gross">Aus Galerie<input type="file" accept="image/*" multiple hidden data-foto></label>
-      </div>`:`<form class="code-box" id="codeForm" autocomplete="off">
-        <label class="feld"><span>Code für Fotos</span><input id="fotoCode" type="password" inputmode="numeric" placeholder="Code eingeben" autocomplete="off"></label>
-        <button class="btn primary" type="submit">Freischalten</button></form>`}
+      <div class="sc-zwei">
+        <label class="btn primary gross" data-foto-knopf="kamera">Foto aufnehmen<input type="file" accept="image/*" capture="environment" hidden data-foto="kamera"></label>
+        <label class="btn gross" data-foto-knopf="galerie">Aus Galerie<input type="file" accept="image/*" multiple hidden data-foto="galerie"></label>
+      </div>
       <div class="foto-raster" id="fotoRaster"></div>
     </section>
     <footer class="sc-fuss"><a href="#" data-act="zurVerwaltung">Zur Verwaltung</a></footer>
@@ -1801,17 +1805,28 @@ async function komprimieren(file){
 // Hinweis: Das ist eine Hürde gegen Fremde mit dem Link, kein echter Schutz (der Code steht in der Datenbank).
 const fotoCodeSoll=()=>String(S.settings.fotoCode||'8852');
 const fotoFrei=()=>LS.get('fotoCode')===fotoCodeSoll();
-function fotoCodePruefen(){
-  const i=$('#fotoCode'); const v=(i&&i.value||'').trim();
-  if(v!==fotoCodeSoll()){ toast('Code falsch'); if(i){ i.value=''; i.focus(); } return; }
-  LS.set('fotoCode',v); toast('Freigeschaltet, jetzt Foto aufnehmen');
-  const e=elem(S.scanElement); if(e) renderScanElement(e);
+// Kleines Fenster für den Code. Nach dem richtigen Code öffnet sich Kamera bzw. Galerie direkt
+// (input.click() im selben Tipp, sonst blockiert iOS das Öffnen).
+function codeAbfragen(ziel){
+  const d=$('#dlg'); d.classList.remove('breit');
+  d.innerHTML=`<form class="dlg-form" id="codeDlg" data-ziel="${ziel}" novalidate autocomplete="off"><h2>Code eingeben</h2>
+    <div class="dlg-body code-fenster"><p class="leer">Für Fotos ist ein Code nötig. Er wird auf diesem Handy gespeichert.</p>
+      <input id="codeEingabe" type="password" inputmode="numeric" pattern="[0-9]*" aria-label="Code" autocomplete="off"><p class="fehler" id="codeFehler"></p></div>
+    <div class="dlg-fuss"><span class="spacer"></span><button type="button" class="btn" data-code-abbruch>Abbrechen</button><button type="submit" class="btn primary">${ziel==='kamera'?'Kamera öffnen':'Galerie öffnen'}</button></div></form>`;
+  d.onclose=null; d.oncancel=null; d.showModal();
+  setTimeout(()=>{ const i=$('#codeEingabe'); if(i) i.focus(); },50);
+}
+function codePruefenUndOeffnen(form){
+  const i=$('#codeEingabe'); const v=(i&&i.value||'').trim();
+  if(v!==fotoCodeSoll()){ $('#codeFehler').textContent='Code falsch, bitte nochmals.'; i.value=''; i.focus(); return; }
+  LS.set('fotoCode',v);
+  const inp=$(`[data-foto="${form.dataset.ziel}"]`); const d=$('#dlg'); if(d.open) d.close();
+  if(inp) inp.click();
 }
 async function fotosHinzufuegen(files){
   const e=elem(S.scanElement); if(!e||!files.length) return;
   if(!fotoFrei()){ toast('Bitte zuerst den Code eingeben'); return; }
   const inp=$('#monteurName'); const von=(inp&&inp.value||'').trim();
-  if(von) LS.set('monteur',von);
   toast('Fotos werden hochgeladen');
   const neu=[]; const laeufe=[];
   for(const f of files){
@@ -1995,6 +2010,9 @@ async function pdZeigen(eingabe){
 /* ---------- Ereignisse ---------- */
 document.addEventListener('click',ev=>{
   const t=ev.target;
+  const fk=t.closest('[data-foto-knopf]');
+  if(fk&&!fotoFrei()){ ev.preventDefault(); codeAbfragen(fk.dataset.fotoKnopf); return; }
+  if(t.closest('[data-code-abbruch]')){ const d=$('#dlg'); if(d.open) d.close(); return; }
   const act=t.closest('[data-act]');
   if(act&&ACT[act.dataset.act]){ ev.preventDefault(); ACT[act.dataset.act](act); return; }
   let vb;
@@ -2027,7 +2045,7 @@ document.addEventListener('keydown',ev=>{
 });
 document.addEventListener('submit',ev=>{
   if(ev.target.id==='pdForm'){ ev.preventDefault(); pdZeigen($('#pdNr').value); }
-  if(ev.target.id==='codeForm'){ ev.preventDefault(); fotoCodePruefen(); }
+  if(ev.target.id==='codeDlg'){ ev.preventDefault(); codePruefenUndOeffnen(ev.target); }
 });
 // PDF auf M, D oder P ziehen; Excel irgendwo ins Fenster ziehen
 const zielZelle=ev=>ev.target.closest&&ev.target.closest('[data-pz]');
@@ -2056,7 +2074,6 @@ function zeileWaehlen(row){
   if(matchMedia('(max-width:1320px)').matches) $('#vorschau').scrollIntoView({behavior:'smooth',block:'start'});
 }
 document.addEventListener('input',ev=>{
-  if(ev.target.id==='monteurName') LS.set('monteur',ev.target.value.trim());
   if(ev.target.id==='objSuche') renderObjektListe();
   if(ev.target.matches('[data-layout]')&&layoutVorschau) layoutVorschau();
 });
