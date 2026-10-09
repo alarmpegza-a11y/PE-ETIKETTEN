@@ -68,6 +68,16 @@ a{color:var(--blau)}
 .seite-kopf{display:flex;align-items:center;justify-content:space-between;margin:0 4px 12px}
 .seite-kopf h2{font-size:15px;font-weight:700}
 .seite-akt{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.ordner-liste{display:grid;gap:2px;margin:2px 0 8px 14px;padding-left:8px;border-left:2px solid var(--blau-hell)}
+.ordner-item{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;border-radius:6px;padding:6px 8px;font-size:13px;cursor:pointer;color:var(--tinte)}
+.ordner-item:hover{background:var(--beton)}
+.ordner-item.aktiv{background:var(--blau);color:#fff}
+.ordner-item.aktiv .obj-count{background:#fff;color:var(--blau)}
+.ordner-neu{background:none;border:0;color:var(--blau);font-weight:600;font-size:13px;text-align:left;padding:6px 8px;cursor:pointer}
+.ordner-titel{color:var(--stahl);font-weight:700}
+select.btn{appearance:auto;padding-right:.4em}
+.pd-modus{font-size:13px;color:var(--stahl);display:flex;align-items:center;gap:6px}
+.pd-modus select{border:1px solid var(--linie);border-radius:6px;padding:.35em .5em;background:#fff;color:var(--tinte)}
 .obj-item{display:grid;grid-template-columns:1fr auto;gap:2px 8px;width:100%;text-align:left;background:none;border:0;border-left:3px solid transparent;padding:10px 10px 10px 11px;border-radius:0 6px 6px 0;cursor:pointer}
 .obj-item:hover{background:var(--beton)}
 .obj-item.aktiv{background:var(--blau-hell);border-left-color:var(--blau)}
@@ -561,11 +571,16 @@ async function delFile(id){
 }
 
 /* ---------- Zustand ---------- */
-const S={objekte:[],plaene:[],elemente:[],settings:{},aktivObjekt:null,aktivElement:null,auswahl:new Set(),scanElement:null,gestartet:false};
+const S={objekte:[],plaene:[],elemente:[],settings:{},aktivObjekt:null,aktivOrdner:'*',aktivElement:null,auswahl:new Set(),scanElement:null,gestartet:false};
 const obj=id=>S.objekte.find(o=>o.id===id);
 const plan=id=>id?S.plaene.find(p=>p.id===id):null;
 const elem=id=>S.elemente.find(e=>e.id===id);
 const elementeVon=oid=>S.elemente.filter(e=>e.objektId===oid).sort(byPos);
+// Unterordner: '*' = alle, '-' = ohne Unterordner, sonst die Ordner-ID
+const imOrdner=(e,ord)=>ord==='*'||(ord==='-'?!e.ordnerId:e.ordnerId===ord);
+const elementeImBlick=o=>elementeVon(o.id).filter(e=>imOrdner(e,S.aktivOrdner));
+// Element-Zeile wie auf der Etikette: die Bezeichnung aus Enventa, die Nasszelle davor nur wenn sie fehlt
+const elText=e=>{ const b=String(e.bezeichnung||'').trim(); return e.pos&&!norm(b).includes(norm(e.pos))?`${e.pos} ${b}`.trim():(b||e.pos||e.barcode||''); };
 const ersteObjektId=()=>{ const f=[...S.objekte].sort((a,b)=>(a.created||0)-(b.created||0))[0]; return f?f.id:null; };
 const lief=e=>{ const o=obj(e.objektId)||{}; return e.lieferdatum||o.lieferdatum||''; };
 function upsert(arr,x){ const i=arr.findIndex(y=>y.id===x.id); if(i<0) arr.push(x); else arr[i]=x; }
@@ -771,7 +786,7 @@ function labelHTML(e){
         ${o.strasse?`<div class="et-zeile">${h(o.strasse)}</div>`:''}
         ${o.plzOrt?`<div class="et-zeile">${h(o.plzOrt)}</div>`:''}
         <div class="et-lief">Lieferdatum: <b>${fmt(lief(e))}</b></div>
-        <div class="et-elem">${h(e.pos)} ${h(e.bezeichnung)}</div>
+        <div class="et-elem">${h(elText(e))}</div>
         ${e.gewerk?`<div class="et-gewerk">${h(e.gewerk)}</div>`:''}
       </div>
       <div class="et-bar">${barcodeSvg(e.barcode)}${e.barcode?`<div class="et-bar-nr">${h(e.barcode)}</div>`:''}</div>
@@ -807,11 +822,20 @@ function renderObjektListe(){
   const obs=[...S.objekte].sort((a,b)=>(a.created||0)-(b.created||0));
   list.innerHTML=obs.length?obs.map(o=>{
     const n=S.elemente.filter(e=>e.objektId===o.id).length;
-    return `<button class="obj-item${o.id===S.aktivObjekt?' aktiv':''}" data-obj="${o.id}" ${o.id===S.aktivObjekt?'aria-current="true"':''}>
-      <span class="obj-name">${h(o.name)}</span><span class="obj-sub">${h(o.kunde||'Ohne Kunde')}</span><span class="obj-count" title="Elemente">${n}</span></button>`;
+    const aktiv=o.id===S.aktivObjekt;
+    return `<button class="obj-item${aktiv?' aktiv':''}" data-obj="${o.id}" ${aktiv?'aria-current="true"':''}>
+      <span class="obj-name">${h(o.name)}</span><span class="obj-sub">${h(o.kunde||'Ohne Kunde')}</span><span class="obj-count" title="Elemente">${n}</span></button>
+      ${aktiv?ordnerListe(o):''}`;
   }).join(''):'<p class="leer">Noch kein Objekt vorhanden.</p>';
 }
 
+function ordnerListe(o){
+  const ord=o.ordner||[]; const els=S.elemente.filter(e=>e.objektId===o.id);
+  const zahl=id=>els.filter(e=>imOrdner(e,id)).length;
+  const knopf=(id,name)=>`<button class="ordner-item${S.aktivOrdner===id?' aktiv':''}" data-ordner="${id}"><span>${h(name)}</span><span class="obj-count">${zahl(id)}</span></button>`;
+  return `<div class="ordner-liste">${ord.length?knopf('*','Alle Elemente')+ord.map(x=>knopf(x.id,x.name)).join('')+(zahl('-')?knopf('-','Ohne Unterordner'):''):''}
+    <button class="ordner-neu" data-act="ordnerNeu">+ Unterordner</button></div>`;
+}
 function planSpalte(art,titel,liste){
   return `<div class="plan-spalte">
     <div class="plan-titel"><h3>${titel}</h3></div>
@@ -859,7 +883,10 @@ function renderObjekt(){
     box.innerHTML=`<div class="leer-gross"><h2>Noch kein Objekt ausgewählt</h2><p>Lege ein Objekt an, um Pläne hochzuladen und Etiketten zu erstellen.</p><button class="btn primary" data-act="neuesObjekt">Neues Objekt</button></div>`;
     return;
   }
-  const els=elementeVon(o.id);
+  if(S.aktivOrdner!=='*'&&S.aktivOrdner!=='-'&&!(o.ordner||[]).some(x=>x.id===S.aktivOrdner)) S.aktivOrdner='*';
+  const els=elementeImBlick(o);
+  const ordAkt=(o.ordner||[]).find(x=>x.id===S.aktivOrdner);
+  const ordTitel=ordAkt?ordAkt.name:S.aktivOrdner==='-'?'Ohne Unterordner':'';
   const sortN=(a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true});
   const von=art=>S.plaene.filter(p=>p.objektId===o.id&&p.art===art).sort(sortN);
   const nPlaene=S.plaene.filter(p=>p.objektId===o.id).length;
@@ -867,20 +894,26 @@ function renderObjekt(){
   const nFotos=els.reduce((s,e)=>s+(e.fotos||[]).length,0);
   box.innerHTML=`
     <header class="obj-kopf"><div>
-      <h1>${h(o.name)}</h1>
+      <h1>${h(o.name)}${ordTitel?` <span class="ordner-titel">› ${h(ordTitel)}</span>`:''}</h1>
       <dl class="obj-daten">
         <div><dt>Kunde</dt><dd>${h(o.kunde)||'–'}</dd></div>
         <div><dt>Adresse</dt><dd>${[o.strasse,o.plzOrt].filter(Boolean).map(h).join(', ')||'–'}</dd></div>
         <div><dt>Auftrag</dt><dd>${h(o.auftragNr)||'–'}</dd></div>
         <div><dt>Lieferdatum</dt><dd>${fmt(o.lieferdatum)}</dd></div>
       </dl></div>
-      <button class="btn" data-act="objektBearbeiten">Objekt bearbeiten</button>
+      <div class="block-aktionen">
+        ${ordAkt?`<button class="btn" data-act="ordnerUmbenennen">Unterordner umbenennen</button><button class="btn danger" data-act="ordnerLoeschen">Unterordner löschen</button>`:''}
+        <button class="btn" data-act="objektBearbeiten">Objekt bearbeiten</button>
+        <button class="btn danger" data-act="objektLoeschenKnopf">Objekt löschen</button>
+      </div>
     </header>
     <section class="block">
       <div class="block-kopf"><div><h2>Elemente <span class="zahl">${els.length}</span></h2><p>Zeile anklicken, um die Etikette zu sehen. Bei <b>M</b>, <b>D</b> und <b>P</b> pro Element den Montage-, Detail- und Produktionsplan hochladen (klicken oder PDF darauf ziehen).</p></div>
         <div class="block-aktionen">
           <button class="btn" data-act="druckAuswahl" id="btnAuswahl" ${S.auswahl.size?'':'disabled'}>Auswahl drucken (${S.auswahl.size})</button>
           <button class="btn danger" data-act="loeschenAuswahl" id="btnLoeschen" ${S.auswahl.size?'':'disabled'}>Auswahl löschen (${S.auswahl.size})</button>
+          <select class="btn" data-verschieben id="selVerschieben" ${S.auswahl.size?'':'disabled'} aria-label="Auswahl in Unterordner verschieben">
+            <option value="">Auswahl verschieben nach …</option>${(o.ordner||[]).map(x=>`<option value="${x.id}">${h(x.name)}</option>`).join('')}<option value="-">Ohne Unterordner</option><option value="__neu">Neuer Unterordner …</option></select>
           ${nFotos?`<button class="btn" data-galerie="objekt:${o.id}">Alle Fotos (${nFotos})</button>`:''}
           <button class="btn primary" data-act="druckAlle" ${els.length?'':'disabled'}>Alle Etiketten drucken (${nEtiketten})</button>
           <button class="btn" data-act="neuesElement">Element hinzufügen</button>
@@ -888,7 +921,7 @@ function renderObjekt(){
       ${els.length?tabelle(els):`<div class="leer-gross"><h2>Noch keine Elemente</h2><p>Excel aus Enventa importieren oder das erste Element von Hand erfassen.</p><label class="btn primary">Excel importieren<input type="file" accept=".xlsx,.xls,.csv" hidden data-excel></label> <button class="btn" data-act="neuesElement">Element hinzufügen</button></div>`}
     </section>
     <section class="block">
-      <div class="block-kopf"><div><h2>Viele Pläne auf einmal</h2><p>Mehrere PDFs wählen. Das Tool schlägt anhand der Nasszelle im Dateinamen (z. B. <b>C5.105.001 … (WC).pdf</b>) das Element vor, du prüfst und bestätigst.</p></div></div>
+      <div class="block-kopf"><div><h2>Viele Pläne auf einmal</h2><p>Mehrere PDFs wählen. Heisst die Datei gleich wie die Bezeichnung des Elements (z. B. <b>H4C Andermatt, C5.106.001, Typ 6.4.3, Bad Typ B6.G (WC), 6.OG.pdf</b>), wird sie automatisch zugeordnet. Du prüfst und bestätigst.</p></div></div>
       <div class="plan-upload">${Object.entries(MEHRZAHL).map(([art,t])=>`<label class="btn">${t} hochladen<input type="file" accept="application/pdf,.pdf" multiple hidden data-upload="${art}"></label>`).join('')}</div>
       ${nPlaene?`<details class="plan-alle"><summary>Alle Pläne dieses Auftrags anzeigen (${nPlaene})</summary>
         <div class="plan-spalten">${Object.entries(MEHRZAHL).map(([art,t])=>planSpalte(art,t,von(art))).join('')}</div></details>`:''}
@@ -898,8 +931,9 @@ function renderObjekt(){
 function updateAuswahlBtn(){
   const b=$('#btnAuswahl'); if(b){ b.disabled=!S.auswahl.size; b.textContent=`Auswahl drucken (${S.auswahl.size})`; }
   const bl=$('#btnLoeschen'); if(bl){ bl.disabled=!S.auswahl.size; bl.textContent=`Auswahl löschen (${S.auswahl.size})`; }
+  const sv=$('#selVerschieben'); if(sv) sv.disabled=!S.auswahl.size;
   const all=$('[data-chk-all]'); const o=obj(S.aktivObjekt);
-  if(all&&o){ const els=elementeVon(o.id); all.checked=els.length>0&&els.every(e=>S.auswahl.has(e.id)); }
+  if(all&&o){ const els=elementeImBlick(o); all.checked=els.length>0&&els.every(e=>S.auswahl.has(e.id)); }
 }
 function istLokal(){ const b=baseUrl(); return !/^https?:\/\//.test(b)||/\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)/.test(b); }
 
@@ -907,7 +941,8 @@ function renderVorschau(){
   revokeUrls();
   const box=$('#vorschau'); const o=obj(S.aktivObjekt);
   let e=elem(S.aktivElement); if(e&&(!o||e.objektId!==o.id)) e=null;
-  if(!e&&o){ e=elementeVon(o.id)[0]||null; S.aktivElement=e?e.id:null; }
+  if(e&&!imOrdner(e,S.aktivOrdner)) e=null;
+  if(!e&&o){ e=elementeImBlick(o)[0]||null; S.aktivElement=e?e.id:null; }
   if(!e){ box.innerHTML=`<div class="vs-kopf"><h2 class="vs-titel">Etikette</h2></div><p class="leer">Sobald ein Element erfasst ist, erscheint hier die Etikette in Originalgrösse.</p>`; return; }
   const link=linkFor(e); const L=layout();
   box.innerHTML=`
@@ -1035,16 +1070,22 @@ async function elementPlanSetzen(eid,art,file){
   return r;
 }
 
-/* Viele Pläne auf einmal: Vorschlag über Nasszelle, Klammerteil und Betriebsauftrag im Dateinamen */
+/* Viele Pläne auf einmal. Der Dateiname ist normalerweise genau die Bezeichnung aus Enventa,
+   z. B. "H4C Andermatt, C5.106.001, Typ 6.4.3, Bad Typ B6.G (WC), 6.OG.pdf".
+   Reihenfolge der Prüfung: Betriebsauftrag im Namen > gleicher Name > Name enthält Bezeichnung > Nasszelle + Klammerteil. */
 function planVorschlag(name,els){
   const fn=norm(String(name).replace(/\.pdf$/i,''));
   const wert=e=>{
     let s=0;
-    if(e.barcode&&fn.includes(norm(e.barcode))) s+=50;
-    const p=norm(e.pos);
-    if(p.length>=4&&fn.includes(p)){
+    if(e.barcode&&fn.includes(norm(e.barcode))) s+=100;
+    const bez=norm(e.bezeichnung), voll=norm(elText(e)), post=norm(e.postext);
+    if(fn&&(fn===bez||fn===voll||fn===post)) s+=80;
+    else if([bez,voll,post].some(x=>x.length>=10&&fn.includes(x))) s+=60;
+    else if(fn.length>=10&&[bez,voll,post].some(x=>x.includes(fn))) s+=40;
+    const nz=norm(e.pos||nasszelleIn(e.bezeichnung));
+    if(nz.length>=4&&fn.includes(nz)){
       s+=20;
-      const kl=/\(([^)]*)\)\s*$/.exec(e.bezeichnung||'');
+      const kl=/\(([^)]*)\)/.exec(e.bezeichnung||'');
       if(kl){ const k=norm(kl[1]); if(k&&fn.includes(k)) s+=5+k.length; }
       const typ=/Bad Typ\s*([A-Z0-9.]+)/i.exec(e.bezeichnung||'');
       if(typ&&fn.includes(norm(typ[1]))) s+=2;
@@ -1056,18 +1097,19 @@ function planVorschlag(name,els){
   return {e:r[0].e,sicher:r.length===1||r[0].s>r[1].s};
 }
 async function massenUpload(files,art){
-  const o=obj(S.aktivObjekt); if(!o){ toast('Zuerst einen Auftrag wählen'); return; }
+  const o=obj(S.aktivObjekt); if(!o){ toast('Zuerst ein Objekt wählen'); return; }
   const pdfs=files.filter(pdfPruefen); if(!pdfs.length) return;
   const els=elementeVon(o.id);
-  if(!els.length){ toast('Dieser Auftrag hat noch keine Elemente. Zuerst die Excel importieren.'); return; }
+  if(!els.length){ toast('Dieses Objekt hat noch keine Elemente. Zuerst die Excel importieren.'); return; }
   const vs=pdfs.map(f=>planVorschlag(f.name,els));
-  const opt=sel=>`<option value="">nicht zuordnen</option>`+els.map(e=>`<option value="${e.id}" ${sel&&sel.id===e.id?'selected':''}>${h([e.pos,e.bezeichnung].filter(Boolean).join(' ')||e.barcode)} · ${h(e.barcode)}</option>`).join('');
+  const opt=sel=>`<option value="">nicht zuordnen</option>`+els.map(e=>`<option value="${e.id}" ${sel&&sel.id===e.id?'selected':''}>${h(elText(e))} · ${h(e.barcode)}</option>`).join('');
+  const nOk=vs.filter(v=>v.e&&v.sicher).length;
   const zeilen=pdfs.map((f,i)=>{
     const v=vs[i]; const ersetzt=v.e&&plan(v.e[feldVon(art)]);
     const st=!v.e?'<span class="zu-nein">kein Treffer</span>':v.sicher?'<span class="zu-ok">passt</span>':'<span class="zu-pruefen">bitte prüfen</span>';
     return `<tr><td>${h(f.name)}${ersetzt?`<br><small class="leer">ersetzt ${h(ersetzt.name)}</small>`:''}</td><td><select name="f_${i}">${opt(v.e)}</select></td><td>${st}</td></tr>`;
   }).join('');
-  const r=await dialog(`${MEHRZAHL[art]} zuordnen`,`<p class="leer">${pdfs.length} Datei${pdfs.length>1?'en':''}. Vorschläge prüfen und bei Bedarf ändern. Erst mit «Hochladen» wird gespeichert.</p>
+  const r=await dialog(`${MEHRZAHL[art]} zuordnen`,`<p><b>${nOk} von ${pdfs.length}</b> Datei${pdfs.length>1?'en':''} automatisch zugeordnet. Bei Bedarf ändern, dann «Hochladen».</p>
     <table class="zu-tab"><thead><tr><th>Datei</th><th>Element</th><th></th></tr></thead><tbody>${zeilen}</tbody></table>`,{ok:'Hochladen',breit:true});
   if(!r) return;
   const laeufe=[]; const doppelt=new Set();
@@ -1089,7 +1131,7 @@ function excelDatum(v){
   if(m){ const y=m[3].length===2?'20'+m[3]:m[3]; return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
   return /^\d{4}-\d{2}-\d{2}/.test(String(v))?String(v).slice(0,10):'';
 }
-// "Kunden-Auftrag: …\nKunde: …\nProjekt: …\nPostext: \nC5.105.001, Typ 6.4.3, Bad Typ B6.G (WC)"
+// "Kunden-Auftrag: …\nKunde: …\nProjekt: …\nPostext: \nH4C Andermatt, C5.105.001, Typ 6.4.3, Bad Typ B6.G (WC), 6.OG"
 function parseBeschreibung(txt){
   const zeilen=String(txt||'').replace(/\r/g,'').split('\n'); const r={}; let post=null;
   for(const z of zeilen){
@@ -1103,10 +1145,10 @@ function parseBeschreibung(txt){
   r.postext=(post||[]).join(' ');
   return r;
 }
-function teilePostext(t){
-  const m=/^([A-Z]{0,3}\d+(?:\.\d+)+)\s*,?\s*(.*)$/i.exec(t||'');
-  return m?{pos:m[1],bezeichnung:m[2].trim()}:{pos:'',bezeichnung:(t||'').trim()};
-}
+// Nasszellen-Nr. irgendwo im Text, z. B. "C5.105.001" (Buchstabe(n), Zahl, mindestens ein Punkt mit Zahl)
+function nasszelleIn(t){ const m=/(?<![A-Za-z0-9])([A-Za-z]{1,3}\d+(?:\.\d+){1,3})(?![\d.]*\d)/.exec(t||''); return m?m[1]:''; }
+// Die Bezeichnung bleibt genau wie in Enventa, die Nasszelle wird nur zusätzlich herausgelesen
+function teilePostext(t){ const b=String(t||'').trim(); return {pos:nasszelleIn(b),bezeichnung:b}; }
 async function importExcel(file){
   if(typeof XLSX==='undefined'){ toast('Excel-Bibliothek nicht geladen. Internet prüfen und Seite neu laden.'); return; }
   let rows;
@@ -1119,37 +1161,73 @@ async function importExcel(file){
   const col={};
   rows[kopf].forEach((c,i)=>{ const k=String(c).trim().toLowerCase(); if(k&&!(k in col)) col[k]=i; });
   const w=(r,k)=>col[k]==null?'':r[col[k]];
-  const auftraege=new Map(); let neu=0, aktualisiert=0;
+  // 1. Zeilen lesen
+  const zeilen=[];
   for(const r of rows.slice(kopf+1)){
     const ba=String(w(r,'betriebsauftrag')).trim();
     if(!/^\d{4,}$/.test(ba)) continue;
     const b=parseBeschreibung(w(r,'beschreibung'));
-    const auftragNr=String(w(r,'dokument')||b['kunden-auftrag']||'').trim()||'ohne Auftrag';
-    const lief=excelDatum(w(r,'lieferdatum'));
-    if(!auftraege.has(auftragNr)){
-      const o={id:objektIdFuer(auftragNr),auftragNr,
-        name:String(w(r,'projektname')||b.projekt||'').trim()||'Auftrag '+auftragNr,
-        kunde:String(w(r,'firma 1')||b.kunde||'').trim()};
-      if(lief) o.lieferdatum=lief;
-      const vorh=obj(o.id);
-      if(!vorh) o.created=Date.now();
-      anlegen('objekte',o,vorh||{strasse:'',plzOrt:'',lieferdatum:''});
-      auftraege.set(auftragNr,{o:obj(o.id),n:0});
-    }
-    const a=auftraege.get(auftragNr); a.n++;
     const t=teilePostext(b.postext);
-    const x={id:'ba_'+ba,objektId:a.o.id,barcode:ba,fixpos:String(w(r,'fixpos')||b['positions-nr']||'').trim(),
-      pos:t.pos,bezeichnung:t.bezeichnung||String(w(r,'bezeichnung')).trim(),gewerk:String(w(r,'bezeichnung')).trim(),
-      artikel:String(w(r,'artikel')).trim(),lieferdatum:lief};
+    zeilen.push({ba,b,t,r,auftragNr:String(w(r,'dokument')||b['kunden-auftrag']||'').trim()||'ohne Auftrag',lief:excelDatum(w(r,'lieferdatum'))});
+  }
+  if(!zeilen.length){ toast('Keine Zeilen mit Betriebsauftrag gefunden'); return; }
+  // 2. Ziel wählen: Objekt (automatisch nach Auftragsnr. oder ein bestehendes) und optional ein Unterordner
+  const schonDa=zeilen.map(z=>elem('ba_'+z.ba)).find(Boolean);
+  const vorschlag=(schonDa&&obj(schonDa.objektId))||findeObjekt(zeilen[0].auftragNr);
+  const projekt=String(w(zeilen[0].r,'projektname')||zeilen[0].b.projekt||'').trim();
+  const ordnerNamen=[...new Set(S.objekte.flatMap(o=>(o.ordner||[]).map(x=>x.name)))];
+  const obs=[...S.objekte].sort((a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true}));
+  const ziel=await dialog('Excel importieren',`<p><b>${zeilen.length} Element${zeilen.length>1?'e':''}</b> in «${h(file.name)}»${projekt?`, Projekt ${h(projekt)}`:''}.</p>
+    <div class="feld-gitter">
+      <label class="feld voll"><span>In welches Objekt?</span><select name="ziel">
+        <option value="__auto" ${vorschlag?'':'selected'}>Automatisch nach Auftragsnummer${vorschlag?'':` (neues Objekt «${h(projekt||zeilen[0].auftragNr)}»)`}</option>
+        ${obs.map(o=>`<option value="${o.id}" ${vorschlag&&vorschlag.id===o.id?'selected':''}>${h(o.name)}${o.auftragNr?` · Auftrag ${h(o.auftragNr)}`:''}</option>`).join('')}
+      </select></label>
+      <label class="feld voll"><span>Unterordner (optional, z. B. Haus A)</span><input name="ordner" list="ordnerVorschlaege" placeholder="leer lassen = kein Unterordner" autocomplete="off">
+        <datalist id="ordnerVorschlaege">${ordnerNamen.map(n=>`<option value="${h(n)}">`).join('')}</datalist></label>
+    </div>
+    <p class="leer">Gleiche Betriebsaufträge werden aktualisiert, nicht doppelt angelegt. Pläne, Anzahl, Status und Fotos bleiben erhalten.</p>`,{ok:'Importieren'});
+  if(!ziel) return;
+  const festesObjekt=ziel.data.ziel!=='__auto'?obj(ziel.data.ziel):null;
+  const ordnerName=String(ziel.data.ordner||'').trim();
+  // 3. Schreiben
+  const auftraege=new Map(); let neu=0, aktualisiert=0;
+  for(const z of zeilen){
+    const key=festesObjekt?festesObjekt.id:z.auftragNr;
+    if(!auftraege.has(key)){
+      let o;
+      if(festesObjekt) o=festesObjekt;
+      else{
+        const x={id:objektIdFuer(z.auftragNr),auftragNr:z.auftragNr,
+          name:String(w(z.r,'projektname')||z.b.projekt||'').trim()||'Auftrag '+z.auftragNr,
+          kunde:String(w(z.r,'firma 1')||z.b.kunde||'').trim()};
+        if(z.lief) x.lieferdatum=z.lief;
+        const vorh=obj(x.id); if(!vorh) x.created=Date.now();
+        anlegen('objekte',x,vorh||{strasse:'',plzOrt:'',lieferdatum:''}); o=obj(x.id);
+      }
+      auftraege.set(key,{o,n:0,ordnerId:ordnerName?ordnerFinden(o,ordnerName):''});
+    }
+    const a=auftraege.get(key); a.n++;
+    const x={id:'ba_'+z.ba,objektId:a.o.id,barcode:z.ba,auftragNr:z.auftragNr,fixpos:String(w(z.r,'fixpos')||z.b['positions-nr']||'').trim(),
+      pos:z.t.pos,bezeichnung:z.t.bezeichnung||String(w(z.r,'bezeichnung')).trim(),postext:z.b.postext,gewerk:String(w(z.r,'bezeichnung')).trim(),
+      artikel:String(w(z.r,'artikel')).trim(),lieferdatum:z.lief};
+    if(a.ordnerId) x.ordnerId=a.ordnerId;
     const vorh=elem(x.id);
-    if(vorh) aktualisiert++; else { neu++; x.anzahl=Math.max(1,Math.round(Number(w(r,'menge bestellt'))||1)); x.created=Date.now(); }
+    if(vorh) aktualisiert++; else { neu++; x.anzahl=Math.max(1,Math.round(Number(w(z.r,'menge bestellt'))||1)); x.created=Date.now(); }
     anlegen('elemente',x,vorh||elemVorgabe());
   }
-  if(!auftraege.size){ toast('Keine Zeilen mit Betriebsauftrag gefunden'); return; }
-  const erster=[...auftraege.values()][0].o;
-  S.aktivObjekt=erster.id; S.aktivElement=null; S.auswahl.clear(); renderAll();
-  const liste=[...auftraege.entries()].map(([nr,a])=>`<li><b>${h(a.o.name)}</b> (Auftrag ${h(nr)}): ${a.n} Element${a.n>1?'e':''}</li>`).join('');
-  dialog('Import abgeschlossen',`<ul>${liste}</ul><p>${neu} neu, ${aktualisiert} aktualisiert. Bestehende Pläne, Anzahl, Status und Fotos bleiben erhalten.</p>`,{ok:'OK',info:true});
+  const erster=[...auftraege.values()][0];
+  S.aktivObjekt=erster.o.id; S.aktivOrdner=erster.ordnerId||'*'; S.aktivElement=null; S.auswahl.clear(); renderAll();
+  const liste=[...auftraege.values()].map(a=>`<li><b>${h(a.o.name)}</b>${a.ordnerId?` › ${h(ordnerName)}`:''}: ${a.n} Element${a.n>1?'e':''}</li>`).join('');
+  dialog('Import abgeschlossen',`<ul>${liste}</ul><p>${neu} neu, ${aktualisiert} aktualisiert.</p>`,{ok:'OK',info:true});
+}
+// Unterordner im Objekt suchen (gleicher Name) oder neu anlegen, gibt die ID zurück
+function ordnerFinden(o,name){
+  const vorh=(o.ordner||[]).find(x=>x.name.trim().toLowerCase()===name.trim().toLowerCase());
+  if(vorh) return vorh.id;
+  const neu={id:uid(),name:name.trim()};
+  patch('objekte',o.id,{ordner:[...(o.ordner||[]),neu]});
+  return neu.id;
 }
 function autoBarcode(o){
   const base=(o.auftragNr||'').replace(/\D/g,'')||String(Date.now()).slice(-6);
@@ -1225,7 +1303,35 @@ const ACT={
     saveElem(e); S.aktivElement=e.id; renderAll(); toast('Element angelegt');
   },
   druckEins(){ const e=elem(S.aktivElement); if(e) drucken([e]); },
-  druckAlle(){ const o=obj(S.aktivObjekt); if(o) drucken(elementeVon(o.id)); },
+  druckAlle(){ const o=obj(S.aktivObjekt); if(o) drucken(elementeImBlick(o)); },
+  async objektLoeschenKnopf(){
+    const o=obj(S.aktivObjekt); if(!o) return;
+    const n=S.elemente.filter(e=>e.objektId===o.id).length;
+    if(!await bestaetigen('Objekt löschen?',`«${o.name}» wird mit ${n} Element${n===1?'':'en'}, allen Unterordnern, Plänen und Fotos für alle Benutzer gelöscht. Das kann nicht rückgängig gemacht werden.`,'Objekt löschen')) return;
+    objektLoeschen(o); S.aktivObjekt=ersteObjektId(); S.aktivOrdner='*'; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast('Objekt gelöscht');
+  },
+  async ordnerNeu(){
+    const o=obj(S.aktivObjekt); if(!o) return;
+    const r=await dialog('Neuer Unterordner',`<div class="feld-gitter">${feld('name','Name',``,{required:true,ph:'z. B. Haus A',voll:true})}</div>`,{ok:'Anlegen'}); if(!r) return;
+    const name=String(r.data.name||'').trim(); if(!name) return;
+    S.aktivOrdner=ordnerFinden(o,name); S.auswahl.clear(); renderAll(); toast('Unterordner angelegt. Elemente auswählen und mit «Auswahl verschieben nach …» hineinlegen.');
+  },
+  async ordnerUmbenennen(){
+    const o=obj(S.aktivObjekt); const x=o&&(o.ordner||[]).find(y=>y.id===S.aktivOrdner); if(!x) return;
+    const r=await dialog('Unterordner umbenennen',`<div class="feld-gitter">${feld('name','Name',x.name,{required:true,voll:true})}</div>`); if(!r) return;
+    const name=String(r.data.name||'').trim(); if(!name) return;
+    patch('objekte',o.id,{ordner:(o.ordner||[]).map(y=>y.id===x.id?{...y,name}:y)}); renderAll(); toast('Unterordner umbenannt');
+  },
+  async ordnerLoeschen(){
+    const o=obj(S.aktivObjekt); const x=o&&(o.ordner||[]).find(y=>y.id===S.aktivOrdner); if(!x) return;
+    const els=S.elemente.filter(e=>e.objektId===o.id&&e.ordnerId===x.id);
+    const r=await dialog(`Unterordner «${x.name}» löschen?`,`<p>${els.length} Element${els.length===1?'':'e'} in diesem Unterordner.</p>
+      <label class="check"><input type="checkbox" name="mit"> Elemente mit Plänen und Fotos ebenfalls löschen</label>
+      <p class="leer">Ohne Häkchen bleiben die Elemente erhalten und landen unter «Ohne Unterordner».</p>`,{ok:'Löschen'}); if(!r) return;
+    if(r.data.mit) els.forEach(elementLoeschen); else els.forEach(e=>patch('elemente',e.id,{ordnerId:''}));
+    patch('objekte',o.id,{ordner:(o.ordner||[]).filter(y=>y.id!==x.id)});
+    S.aktivOrdner='*'; S.auswahl.clear(); renderAll(); toast('Unterordner gelöscht');
+  },
   async loeschenAuswahl(){
     const o=obj(S.aktivObjekt); if(!o) return;
     const els=elementeVon(o.id).filter(e=>S.auswahl.has(e.id)); if(!els.length) return;
@@ -1577,7 +1683,7 @@ async function fotoLoeschen(fid){
 
 /* ---------- Fotos ansehen: Galerie pro Element (oder ganzer Auftrag) und Grossansicht ---------- */
 const GAL_URLS=[]; const LB={bilder:[],i:0};
-const elName=e=>[e.pos,e.bezeichnung].filter(Boolean).join(' ')||e.barcode;
+const elName=elText;
 async function galerieOeffnen(ziel,startIdx=null){
   const objektweit=ziel.startsWith('objekt:');
   const els=objektweit?elementeVon(ziel.slice(7)):[elem(ziel)].filter(Boolean);
@@ -1626,11 +1732,17 @@ document.addEventListener('keydown',ev=>{
 /* ---------- Produktion: Barcode scannen, Produktionsplan anzeigen ---------- */
 // Der Handscanner tippt die Nummer ins Feld und drückt Enter. Der Plan erscheint in der Seite, das Feld ist sofort wieder bereit.
 let pdUrl=null, pdLauf=0;
+// Pro PC gespeichert: 'download' lädt das PDF nach jedem Scan herunter (Chrome öffnet es dann automatisch, siehe Anleitung)
+const pdModus=()=>LS.get('pdModus','download');
 function renderProduktion(){
   const box=$('#produktion');
   if(!$('#pdNr',box)){
     box.innerHTML=`<div class="pd">
-      <header class="pd-kopf"><span class="tb-logo">${logoMarkup()}</span><h1>Produktion · Plan scannen</h1>${syncBadge()}<a class="btn" href="#">Zur Verwaltung</a></header>
+      <header class="pd-kopf"><span class="tb-logo">${logoMarkup()}</span><h1>Produktion · Plan scannen</h1>
+        <label class="pd-modus">Nach dem Scan <select data-pd-modus>
+          <option value="download" ${pdModus()==='download'?'selected':''}>PDF herunterladen und öffnen</option>
+          <option value="anzeigen" ${pdModus()==='anzeigen'?'selected':''}>nur hier anzeigen</option></select></label>
+        ${syncBadge()}<a class="btn" href="#">Zur Verwaltung</a></header>
       <form class="pd-form" id="pdForm" autocomplete="off"><input id="pdNr" inputmode="numeric" placeholder="Betriebsauftrag scannen oder eintippen" aria-label="Betriebsauftrag"><button class="btn" type="submit">Plan öffnen</button></form>
       <div class="pd-info" id="pdInfo"><span>Barcode auf der Etikette scannen. Geht der Scanner nicht, die Nummer unter dem Barcode eintippen und Enter drücken.</span></div>
       <div class="pd-leer" id="pdLeer">Bereit zum Scannen</div>
@@ -1639,166 +1751,4 @@ function renderProduktion(){
     // Der PDF-Viewer holt sich beim Laden den Fokus. Zurück ins Feld, damit der nächste Scan dort landet.
     $('#pdPdf').addEventListener('load',()=>[50,400,1200].forEach(ms=>setTimeout(()=>{ const i=$('#pdNr'); if(i&&document.body.classList.contains('modus-prod')) i.focus(); },ms)));
   }
-  syncStatus();
-  setTimeout(()=>{ const i=$('#pdNr'); if(i) i.focus(); },0);
-}
-function pdLeer(text){ const fr=$('#pdPdf'), l=$('#pdLeer'); fr.hidden=true; fr.removeAttribute('src'); l.hidden=false; l.textContent=text; }
-async function pdZeigen(eingabe){
-  const nr=String(eingabe||'').replace(/\s+/g,''); const info=$('#pdInfo'), inp=$('#pdNr');
-  if(!nr||!info) return;
-  inp.value=''; inp.focus();
-  const lauf=++pdLauf;
-  const e=findeBA(nr);
-  if(!e){ info.innerHTML=`<span class="gross">${h(nr)}</span><span class="fehler">Betriebsauftrag nicht gefunden. Ist die Excel dieses Auftrags importiert?</span>`; pdLeer('Kein Plan'); return; }
-  const o=obj(e.objektId)||{};
-  const kopf=`<span class="gross">${h(e.barcode)}</span><span><b>${h([e.pos,e.bezeichnung].filter(Boolean).join(' '))}</b><br>${h([e.gewerk,o.name].filter(Boolean).join(' · '))}</span><span class="spacer"></span>`;
-  const p=plan(e.produktionPlanId);
-  if(!p){ info.innerHTML=kopf+'<span class="fehler">Für dieses Element ist noch kein Produktionsplan hochgeladen.</span>'; pdLeer('Kein Produktionsplan'); return; }
-  info.innerHTML=kopf+'<span>Plan wird geladen …</span>'; pdLeer('Plan wird geladen …');
-  const f=p.fileId?await getFile(p.fileId):null;
-  if(lauf!==pdLauf) return;
-  if(!f){
-    info.innerHTML=kopf+(p.url?`<a class="btn primary" href="${h(p.url)}" target="_blank" rel="noopener">Plan öffnen</a>`:'<span class="fehler">Der Plan konnte nicht geladen werden. Internet prüfen und nochmals scannen.</span>');
-    pdLeer('Plan nicht verfügbar'); return;
-  }
-  if(pdUrl) URL.revokeObjectURL(pdUrl);
-  pdUrl=URL.createObjectURL(new Blob([f.data],{type:'application/pdf'}));
-  const fr=$('#pdPdf'); fr.src=pdUrl; fr.hidden=false; $('#pdLeer').hidden=true;
-  info.innerHTML=kopf+`<span>${h(p.name)}</span><a class="btn" href="${pdUrl}" target="_blank" rel="noopener">In neuem Tab</a><a class="btn" href="${pdUrl}" download="${h(p.name)}">Herunterladen</a>`;
-  inp.focus();
-}
-
-/* ---------- Ereignisse ---------- */
-document.addEventListener('click',ev=>{
-  const t=ev.target;
-  const act=t.closest('[data-act]');
-  if(act&&ACT[act.dataset.act]){ ev.preventDefault(); ACT[act.dataset.act](act); return; }
-  let vb;
-  if((vb=t.closest('[data-pk-laden]'))){ planLaden(vb.dataset.pkLaden); return; }
-  if((vb=t.closest('[data-pk-teilen]'))){ planTeilen(vb.dataset.pkTeilen); return; }
-  if((vb=t.closest('[data-plan-zuweisen]'))){ const p=plan(vb.dataset.planZuweisen); if(p) planZuweisenDialog(p); return; }
-  const oi=t.closest('[data-obj]');
-  if(oi){ S.aktivObjekt=oi.dataset.obj; S.aktivElement=null; S.auswahl.clear(); renderAll(); return; }
-  let b;
-  if((b=t.closest('[data-el-edit]'))){ elementBearbeiten(b.dataset.elEdit); return; }
-  if((b=t.closest('[data-el-scan]'))){ const e=elem(b.dataset.elScan); if(e){ S.scanElement=e.id; location.hash=hashFor(e); } return; }
-  if((b=t.closest('[data-plan-dl]'))){ const p=plan(b.dataset.planDl); if(p) planHerunterladen(p); return; }
-  if((b=t.closest('[data-plan-edit]'))){ const p=plan(b.dataset.planEdit); if(p) planLink(p); return; }
-  if((b=t.closest('[data-plan-del]'))){ const p=plan(b.dataset.planDel); if(p) planLoeschen(p); return; }
-  if((b=t.closest('[data-foto-del]'))){ fotoLoeschen(b.dataset.fotoDel); return; }
-  if((b=t.closest('[data-galerie]'))){ galerieOeffnen(b.dataset.galerie,b.dataset.idx!=null?Number(b.dataset.idx):null); return; }
-  if((b=t.closest('[data-lb]'))){ lbZeigen(Number(b.dataset.lb)); return; }
-  if((b=t.closest('[data-lb-nav]'))){ lbZeigen(LB.i+Number(b.dataset.lbNav)); return; }
-  if(t.closest('[data-lb-zu]')){ $('#lb').close(); return; }
-  const row=t.closest('[data-row]');
-  if(row&&!t.closest('button,input,a,label')) zeileWaehlen(row);
-});
-document.addEventListener('keydown',ev=>{
-  const row=ev.target.closest&&ev.target.closest('[data-row]');
-  if(row&&ev.target===row&&(ev.key==='Enter'||ev.key===' ')){ ev.preventDefault(); zeileWaehlen(row); }
-  // Produktion: Scanner-Eingabe landet immer im Nummernfeld, auch wenn vorher etwas anderes angeklickt wurde
-  if(document.body.classList.contains('modus-prod')&&/^\d$/.test(ev.key)){ const i=$('#pdNr'); if(i&&document.activeElement!==i) i.focus(); }
-});
-document.addEventListener('submit',ev=>{
-  if(ev.target.id==='pdForm'){ ev.preventDefault(); pdZeigen($('#pdNr').value); }
-  if(ev.target.id==='codeForm'){ ev.preventDefault(); fotoCodePruefen(); }
-});
-// PDF auf M, D oder P ziehen; Excel irgendwo ins Fenster ziehen
-const zielZelle=ev=>ev.target.closest&&ev.target.closest('[data-pz]');
-document.addEventListener('dragover',ev=>{
-  if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
-  if(!ev.dataTransfer||![...ev.dataTransfer.types].includes('Files')) return;
-  ev.preventDefault();
-  $$('.pz.drop').forEach(x=>x.classList.remove('drop'));
-  const z=zielZelle(ev); if(z) z.classList.add('drop');
-});
-document.addEventListener('dragleave',ev=>{ const z=zielZelle(ev); if(z) z.classList.remove('drop'); });
-document.addEventListener('drop',async ev=>{
-  if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
-  const files=ev.dataTransfer?[...ev.dataTransfer.files]:[]; if(!files.length) return;
-  ev.preventDefault(); $$('.pz.drop').forEach(x=>x.classList.remove('drop'));
-  const z=zielZelle(ev);
-  if(z){ const [eid,art]=z.dataset.pz.split('|'); const r=await elementPlanSetzen(eid,art,files[0]); if(r){ renderAll(); toast(`${ARTEN[art]} wird hochgeladen`); r.done.then(()=>toast(`${ARTEN[art]} gespeichert`),()=>{}); } return; }
-  const xl=files.find(f=>/\.(xlsx|xls|csv)$/i.test(f.name));
-  if(xl){ importExcel(xl); return; }
-  toast('PDF direkt auf M, D oder P beim Element ziehen');
-});
-function zeileWaehlen(row){
-  S.aktivElement=row.dataset.row;
-  $$('.el-tab tr.aktiv').forEach(r=>r.classList.remove('aktiv')); row.classList.add('aktiv');
-  renderVorschau();
-  if(matchMedia('(max-width:1320px)').matches) $('#vorschau').scrollIntoView({behavior:'smooth',block:'start'});
-}
-document.addEventListener('input',ev=>{
-  if(ev.target.id==='monteurName') LS.set('monteur',ev.target.value.trim());
-  if(ev.target.matches('[data-layout]')&&layoutVorschau) layoutVorschau();
-});
-document.addEventListener('change',async ev=>{
-  const t=ev.target;
-  if(t.matches('[data-upload]')){
-    const files=[...t.files]; t.value=''; massenUpload(files,t.dataset.upload);
-  }else if(t.matches('[data-excel]')){
-    const f=t.files[0]; t.value=''; if(f) importExcel(f);
-  }else if(t.matches('[data-pz-file]')){
-    const f=t.files[0]; t.value=''; const [eid,art]=t.dataset.pzFile.split('|');
-    const r=await elementPlanSetzen(eid,art,f);
-    if(r){ renderAll(); toast(`${ARTEN[art]} wird hochgeladen`); r.done.then(()=>toast(`${ARTEN[art]} gespeichert`),()=>{}); }
-  }else if(t.matches('[data-anz]')){
-    const e=elem(t.dataset.anz); if(!e) return;
-    const n=anz({anzahl:t.value}); t.value=n; patch('elemente',e.id,{anzahl:n}); renderObjekt(); renderVorschau();
-  }else if(t.matches('[data-chk]')){
-    t.checked?S.auswahl.add(t.dataset.chk):S.auswahl.delete(t.dataset.chk); updateAuswahlBtn();
-  }else if(t.matches('[data-chk-all]')){
-    const o=obj(S.aktivObjekt); if(!o) return;
-    elementeVon(o.id).forEach(e=>t.checked?S.auswahl.add(e.id):S.auswahl.delete(e.id));
-    $$('[data-chk]').forEach(c=>c.checked=t.checked); updateAuswahlBtn();
-  }else if(t.matches('[data-foto]')){
-    const files=[...t.files]; t.value=''; fotosHinzufuegen(files);
-  }
-});
-
-function route(){
-  const m=/^#e=([A-Za-z0-9_-]+)/.exec(location.hash);
-  const q=/^#a=/.test(location.hash)?new URLSearchParams(location.hash.slice(1)):null;
-  const b=/^#b=([^&]+)/.exec(location.hash);
-  const prod=location.hash==='#produktion';
-  const scan=!prod&&!!(m||q||b);
-  document.body.classList.toggle('modus-scan',scan);
-  document.body.classList.toggle('modus-prod',prod);
-  if(!S.gestartet){
-    if(scan) $('#scan').innerHTML=`<div class="sc">${scanKopf()}<p class="sc-fehler">Daten werden geladen</p></div>`;
-    if(prod) $('#produktion').innerHTML=`<div class="pd-leer">Daten werden geladen</div>`;
-    syncStatus(); return;
-  }
-  if(prod) renderProduktion();
-  else if(scan){ window.scrollTo(0,0); b?renderScanBA(decodeURIComponent(b[1])):m?renderScan(m[1]):renderScanEnventa(q); }
-  else{ renderAll(); }
-  syncStatus();
-}
-window.addEventListener('hashchange',route);
-window.addEventListener('popstate',route);
-window.addEventListener('resize',debounce(fitSkala,120));
-
-/* ---------- Start ---------- */
-async function init(){
-  applyLayout(); route();
-  await DB.open();
-  const auth=getAuth(fbApp);
-  let gestartet=false;
-  const los=()=>{ if(!gestartet){ gestartet=true; starteListener(); } };
-  onAuthStateChanged(auth,user=>{
-    angemeldet=!!user;
-    if(user){ authFehler=null; if(gestartet&&zugriffFehler){ fehlerZurueck(); starteListener(); } else los(); }
-  });
-  signInAnonymously(auth).catch(err=>{
-    authFehler=err.code||err.message; console.warn('Anonyme Anmeldung fehlgeschlagen:',authFehler); los();
-  });
-  setTimeout(los,20000);
-}
-init().catch(err=>{ console.error(err); syncFehler(err); });
-</script>
-<script>
-setTimeout(function(){ if(!window.__peStart){ var b=document.getElementById('banner'); b.hidden=false; b.textContent='Die Datenbank-Bibliothek konnte nicht geladen werden. Bitte Internetverbindung prüfen und die Seite neu laden.'; } },10000);
-</script>
-</body>
-</html>
+  sy
