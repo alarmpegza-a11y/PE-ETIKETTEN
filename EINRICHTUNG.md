@@ -57,7 +57,7 @@ Dann die Adresse in `index.html` bei `const WORKER_URL=''` eintragen und online 
 
 **Testen:** Im Büro einen Plan auf M, D oder P ziehen, dann auf dem iPhone den QR-Code scannen: PDF öffnen, senden, herunterladen, montiert melden, Foto aufnehmen.
 
-Danach: **Einstellungen → Dateien nach Dropbox übertragen**. Überträgt alle alten Pläne und Fotos, liest jede Datei zur Kontrolle zurück und löscht erst dann die alte. Kann beliebig oft gestartet werden.
+Alte Pläne und Fotos werden automatisch im Hintergrund nach Dropbox übertragen, sobald das Büro geöffnet ist (jede Datei wird geprüft, erst dann wird die alte gelöscht). Kein Knopf nötig.
 
 ## 5. Firestore-Regeln scharf schalten (zuletzt)
 

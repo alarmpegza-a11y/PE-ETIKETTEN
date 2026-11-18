@@ -780,6 +780,7 @@ function starteListener(neu=false){
       else if(geaendert) planRender();
       pruefeAufbewahrung();
       if(name==='elemente') barcodesPflegen();
+      autoMigration();
     },syncFehler));
   }
   abmelden.push(onSnapshot(ref('settings','app'),{includeMetadataChanges:true},snap=>{
@@ -1663,8 +1664,7 @@ const ACT={
       :`${feld('fotoCode','Code für Fotos (Monteure)',fotoCodeSoll(),{ph:'8852'})}
       <p class="leer" style="align-self:end">Monteure geben den Code einmal pro Handy ein. Nach einer Änderung ist er auf allen Handys neu nötig.</p>`}
       ${DROPBOX?`<div class="feld voll"><span>Speicherort für Pläne und Fotos</span>
-        <p class="leer" style="margin:0 0 8px">Dropbox (über den Worker). Ältere Dateien aus Firestore oder Firebase Storage bleiben lesbar und lassen sich hier übertragen. Jede Datei wird nach dem Übertragen zurückgelesen und geprüft, erst dann wird die alte gelöscht.</p>
-        <div><button type="button" class="btn" data-act="migration">Dateien nach Dropbox übertragen</button></div></div>`
+        <p class="leer" style="margin:0">Dropbox (über den Worker). Neue Pläne und Fotos gehen automatisch dorthin. Ältere Dateien werden automatisch im Hintergrund übertragen, sobald das Büro geöffnet ist (jede Datei wird geprüft, erst dann wird die alte gelöscht).</p></div>`
       :`<div class="feld voll"><span>Speicherort für Pläne und Fotos</span>
         <label class="check"><input type="checkbox" name="speicherStorage" ${S.settings.speicher==='storage'?'checked':''}> Firebase Storage verwenden</label>
         <p class="leer">Erst ankreuzen, wenn Blaze und Storage eingerichtet sind. Ohne Häkchen wird in der Datenbank gespeichert (Gratis-Tarif, für Tests). Bereits hochgeladene Dateien bleiben in beiden Fällen lesbar.</p></div>`}
@@ -2300,30 +2300,45 @@ function regelnHinweis(){
 
 /* ---------- Alte Dateien (Firestore / Firebase Storage) nach Dropbox übertragen ----------
    Pro Datei: hochladen, über den Worker zurücklesen und Grösse prüfen, Verweise umstellen, erst dann die alte löschen.
-   Erneut starten setzt fort: Was schon in Dropbox liegt, wird übersprungen. */
-let migrationLaeuft=false;
-async function migration(){
+   Läuft AUTOMATISCH im Hintergrund, sobald das Büro geöffnet ist (kein Knopf nötig). Bei Abbruch (Seite zu)
+   geht nichts verloren: Beim nächsten Öffnen geht es weiter, Erledigtes wird übersprungen. */
+let migrationLaeuft=false, autoMigrationGeplant=false;
+function autoMigration(){
+  if(autoMigrationGeplant||!DROPBOX||!istBuero()||!navigator.onLine) return;
+  if(!['objekte','plaene','elemente'].every(k=>meta[k]&&!meta[k].fromCache)) return;
+  const offen=S.plaene.some(p=>p.fileId&&!istDbx(p.fileId))||S.elemente.some(e=>(e.fotos||[]).some(f=>f&&f.id&&!istDbx(f.id)));
+  if(!offen) return;
+  autoMigrationGeplant=true;
+  // kurz versetzt, damit mehrere offene Büro-PCs nicht gleichzeitig dieselbe Datei übertragen
+  setTimeout(()=>migration(true),3000+Math.random()*7000);
+}
+async function migration(auto=false){
   if(!DROPBOX||!istBuero()||migrationLaeuft) return;
-  if(!['objekte','plaene','elemente'].every(k=>meta[k]&&!meta[k].fromCache)){ toast('Bitte warten, bis alle Daten geladen sind (Live verbunden)'); return; }
+  if(!['objekte','plaene','elemente'].every(k=>meta[k]&&!meta[k].fromCache)){ if(!auto) toast('Bitte warten, bis alle Daten geladen sind (Live verbunden)'); return; }
   migrationLaeuft=true;
-  const d=$('#dlg'); if(d.open) d.close();
-  dialog('Dateien nach Dropbox übertragen','<div id="migText"><p>Bestandesaufnahme läuft</p></div>',{ok:'Schliessen',info:true});
-  const zeig=t=>{ const el=$('#migText'); if(el) el.innerHTML=t; };
+  let zeig;
+  if(auto){ let n=0; zeig=()=>{ if(++n%10===1) toast('Ältere Pläne und Fotos werden automatisch nach Dropbox übertragen …'); }; }
+  else{
+    const d=$('#dlg'); if(d.open) d.close();
+    dialog('Dateien nach Dropbox übertragen','<div id="migText"><p>Bestandesaufnahme läuft</p></div>',{ok:'Schliessen',info:true});
+    zeig=t=>{ const el=$('#migText'); if(el) el.innerHTML=t; };
+  }
   const pruefen=async(pfad,soll)=>{ const r=await apiLaden('/api/datei?pfad='+encodeURIComponent(pfad)); if(r.data.byteLength!==soll) throw new Error('Prüfung fehlgeschlagen'); };
-  offeneUploads++;
   let pOk=0,pFehl=0,fOk=0,fFehl=0;
   try{
     const plaeneJe=new Map();
     for(const p of S.plaene) if(p.fileId&&!istDbx(p.fileId)){ if(!plaeneJe.has(p.fileId)) plaeneJe.set(p.fileId,[]); plaeneJe.get(p.fileId).push(p); }
     const fotos=[]; for(const e of S.elemente) for(const f of (e.fotos||[])) if(f&&f.id&&!istDbx(f.id)) fotos.push({eid:e.id,f});
     const total=plaeneJe.size+fotos.length;
-    if(!total){ zeig('<p>Alles erledigt: Alle Pläne und Fotos liegen bereits in Dropbox.</p>'); return; }
+    if(!total){ if(!auto) zeig('<p>Alles erledigt: Alle Pläne und Fotos liegen bereits in Dropbox.</p>'); return; }
     const hinweis='<p class="leer">Fenster offen lassen. Bei einem Abbruch einfach erneut starten, Erledigtes wird übersprungen.</p>';
     const balken=i=>`<div class="pk-balken"><i style="width:${Math.max(3,Math.round(i/total*100))}%"></i></div>`;
     let i=0;
     for(const [alt,ps] of plaeneJe){
       zeig(`<p>Plan ${i+1} von ${plaeneJe.size}: <strong>${h(ps[0].name)}</strong></p>${balken(i)}${hinweis}`);
       try{
+        // Inzwischen von einem anderen Büro-PC übertragen? Dann überspringen
+        if(!S.plaene.some(p=>p.fileId===alt)){ i++; continue; }
         DATEI_FEHLER.delete(alt);
         const f=await getFile(alt); if(!f) throw new Error('Quelle '+(DATEI_FEHLER.get(alt)||'fehlt'));
         const pfad=`plaene/${ps[0].objektId}/${uid()}.pdf`;
@@ -2340,6 +2355,7 @@ async function migration(){
     for(const {eid,f} of fotos){
       k++; zeig(`<p>Foto ${k} von ${fotos.length}</p>${balken(i)}${hinweis}`);
       try{
+        const el=elem(eid); if(!el||!(el.fotos||[]).some(x=>x&&x.id===f.id)){ i++; continue; }
         DATEI_FEHLER.delete(f.id);
         const dd=await getFile(f.id); if(!dd) throw new Error('Quelle fehlt');
         let typ=(dd.type||'image/jpeg').toLowerCase(); if(typ==='image/jpg'||!/^image\//.test(typ)) typ='image/jpeg';
@@ -2358,8 +2374,9 @@ async function migration(){
       }catch(err){ console.error('Übertragung Foto',f.id,err); fFehl++; }
       i++;
     }
-  }catch(err){ console.error(err); zeig(`<p class="pk-status fehler">Abgebrochen: ${h(err.message)}</p><p>Bitte erneut starten.</p>`); return; }
-  finally{ offeneUploads--; migrationLaeuft=false; }
+  }catch(err){ console.error(err); if(!auto) zeig(`<p class="pk-status fehler">Abgebrochen: ${h(err.message)}</p><p>Bitte erneut starten.</p>`); return; }
+  finally{ migrationLaeuft=false; }
+  if(auto){ if(pOk+fOk) toast(`${pOk} Pläne und ${fOk} Fotos nach Dropbox übertragen${pFehl+fFehl?`, ${pFehl+fFehl} folgen beim nächsten Öffnen`:''}`); return; }
   const rot=n=>n?`, <span class="pk-status fehler" style="display:inline">${n} fehlgeschlagen</span>`:'';
   zeig(`<p><strong>Fertig.</strong></p><p>Pläne übertragen: ${pOk}${rot(pFehl)}<br>Fotos übertragen: ${fOk}${rot(fFehl)}</p>${pFehl||fFehl?'<p class="leer">Fehlgeschlagene bleiben unverändert am alten Ort und bleiben lesbar. Erneut starten versucht sie nochmals.</p>':''}`);
   renderAll();
