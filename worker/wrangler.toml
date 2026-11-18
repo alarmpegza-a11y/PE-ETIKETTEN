@@ -1,0 +1,19 @@
+name = "pe-etiketten-api"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[vars]
+FIREBASE_PROJECT_ID = "etikette-fa8d1"
+# Komma-Liste der erlaubten Seiten (ohne Pfad, ohne Schrägstrich am Ende)
+ALLOWED_ORIGINS = "https://alarmpegza-a11y.github.io,http://localhost:8788"
+
+# Optional, aber empfohlen (PIN-Sperre über alle Instanzen):
+#   npx wrangler kv namespace create PE_KV
+# und die ausgegebene id hier eintragen, dann die Kommentarzeichen entfernen:
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "HIER_ID_EINTRAGEN"
+
+[observability]
+enabled = true

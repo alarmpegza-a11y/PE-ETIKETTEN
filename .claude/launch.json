@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "testserver", "runtimeExecutable": "node", "runtimeArgs": ["test/dev-server.mjs"], "port": 8788 },
+    { "name": "testserver-alte-regeln", "runtimeExecutable": "node", "runtimeArgs": ["test/dev-server.mjs"], "port": 8789, "env": { "PORT": "8789", "ALT_REGELN": "1" } }
+  ]
+}

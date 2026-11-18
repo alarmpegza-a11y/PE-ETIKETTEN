@@ -1,0 +1,48 @@
+rules_version = '2';
+// PE Element-Etiketten – Firestore-Regeln
+// Rollen in rollen/{uid}: 'buero' (nur von Hand in der Konsole setzen) oder 'monteur' (setzt der Worker nach PIN).
+// Ohne Eintrag = 'extern' (Kunden, Planer, Architekten, Bauleiter): nur einzelne Dokumente lesen.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function angemeldet() { return request.auth != null; }
+    function rolle() {
+      return angemeldet() && exists(/databases/$(database)/documents/rollen/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/rollen/$(request.auth.uid)).data.rolle : 'extern';
+    }
+    function buero() { return rolle() == 'buero'; }
+    function monteur() { return rolle() == 'monteur' || buero(); }
+
+    match /objekte/{id} {
+      allow get: if angemeldet();
+      allow list, write: if buero();
+    }
+    match /plaene/{id} {
+      allow get: if angemeldet();
+      allow list, write: if buero();
+    }
+    match /elemente/{id} {
+      allow get: if angemeldet();
+      allow list, create, delete: if buero();
+      allow update: if buero()
+        || (monteur() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'montiert', 'fotos']));
+    }
+    match /barcodes/{bc} {
+      allow get: if angemeldet();
+      allow list, write: if buero();
+    }
+    match /settings/{id} {
+      allow get: if angemeldet();
+      allow write: if buero();
+    }
+    match /rollen/{uid} {
+      allow get: if angemeldet() && request.auth.uid == uid;
+      allow write: if false;   // nur Konsole bzw. Worker (Service-Konto)
+    }
+    // Alte Dateien aus der Demo-Zeit, bis zur Übertragung nach Dropbox:
+    match /dateien/{d=**} {
+      allow read: if angemeldet();
+      allow write: if buero();
+    }
+  }
+}
