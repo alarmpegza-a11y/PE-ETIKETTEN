@@ -4,6 +4,8 @@ compatibility_date = "2025-09-01"
 workers_dev = true
 
 [vars]
+# Ziel der QR-Codes (Weiterleitung). Bei Ausfall von GitHub hier eine andere Adresse eintragen und neu hochladen.
+APP_URL = "https://alarmpegza-a11y.github.io/PE-ETIKETTEN/"
 FIREBASE_PROJECT_ID = "etikette-fa8d1"
 # Komma-Liste der erlaubten Seiten (ohne Pfad, ohne Schrägstrich am Ende)
 ALLOWED_ORIGINS = "https://alarmpegza-a11y.github.io,http://localhost:8788"

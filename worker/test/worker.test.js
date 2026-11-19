@@ -87,6 +87,7 @@ globalThis.fetch = async (input, init = {}) => {
 };
 
 const env = () => ({
+  APP_URL: 'https://alarmpegza-a11y.github.io/PE-ETIKETTEN/',
   FIREBASE_PROJECT_ID: PID, ALLOWED_ORIGINS: ORIGIN + ',http://localhost:8788', __JWKS_URL: 'https://jwks.test',
   DROPBOX_APP_KEY: 'k', DROPBOX_APP_SECRET: 's', DROPBOX_REFRESH_TOKEN: 'r', MONTEUR_PIN: '482913',
   FIREBASE_SERVICE_ACCOUNT: JSON.stringify({ client_email: 'sa@test', private_key: saPem, token_uri: 'https://oauth2.googleapis.com/token' })
@@ -268,4 +269,13 @@ test('Hilfsfunktionen', () => {
   assert.equal(__test.dateiPfad('plaene/a_26-0412.X/p1.pdf').dbx, '/plaene/a_26-0412.X/p1.pdf');
   assert.equal(__test.abgelaufen({ created: Date.now() - 30 * TAG }, {}), true);
   assert.equal(__test.abgelaufen({ created: Date.now() - 3 * TAG }, {}), false);
+});
+
+test('QR-Adresse leitet zur App weiter (Schlüssel nach # bleibt im Browser)', async () => {
+  for (const pfad of ['/', '/q']) {
+    const r = await worker.fetch(new Request('https://w.test' + pfad), env(), { waitUntil() {} });
+    assert.equal(r.status, 302); assert.equal(r.headers.get('Location'), 'https://alarmpegza-a11y.github.io/PE-ETIKETTEN/');
+  }
+  const ohne = await worker.fetch(new Request('https://w.test/'), { ...env(), APP_URL: '' }, { waitUntil() {} });
+  assert.equal(ohne.status, 503);
 });

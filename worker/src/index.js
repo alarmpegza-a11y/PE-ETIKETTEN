@@ -74,6 +74,14 @@ async function route(request, envRoh, ctx) {
   const url = new URL(request.url);
   const teile = url.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
   const m = request.method;
+  // QR-Codes zeigen auf diese Cloudflare-Adresse. Von hier geht es zur App (heute GitHub Pages).
+  // Der Browser behält dabei den Teil nach # (Etiketten-Schlüssel). Fällt der App-Hoster aus,
+  // genügt es, APP_URL in wrangler.toml zu ändern und neu hochzuladen: alle Etiketten funktionieren weiter.
+  if ((m === 'GET' || m === 'HEAD') && (url.pathname === '/' || url.pathname === '/q')) {
+    const ziel = String(env.APP_URL || '').trim();
+    if (!/^https:\/\//.test(ziel)) throw new HttpError(503, 'app-url-fehlt');
+    return new Response(null, { status: 302, headers: { Location: ziel, 'Cache-Control': 'no-store' } });
+  }
   if (teile[0] !== 'api') throw new HttpError(404, 'nicht-gefunden');
   const was = teile[1];
 
