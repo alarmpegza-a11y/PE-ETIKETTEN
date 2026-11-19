@@ -50,6 +50,7 @@ Baustelle (Handy, OHNE Anmeldung)
 - **Firebase-Web-API-Key:** öffentlich (bei Firebase üblich), eingeschränkt auf die Websites `alarmpegza-a11y.github.io` und `etikette-fa8d1.firebaseapp.com` sowie die Firebase-Dienste.
 - **Dropbox:** Zugriffstyp App-Ordner, Firmenkonto, Token nur serverseitig; Dateien werden nie überschrieben, gelöschte Dateien sind in Dropbox wiederherstellbar.
 - **CORS:** Der Worker antwortet Browsern nur für die eigene Webseite.
+- **Ausfallsicherheit QR-Codes:** Die Etiketten zeigen nicht direkt auf GitHub, sondern auf die Cloudflare-Adresse `pe-etiketten-api.alarm-pe-gza.workers.dev`, die zur App weiterleitet. Fällt GitHub aus, wird nur das Weiterleitungsziel geändert; gedruckte Etiketten bleiben gültig. Keine Firmen-Domain, keine Zusatzkosten.
 
 ## 5. Umsetzung der IT-Vorgaben
 
