@@ -3,8 +3,10 @@
  * Sichere Brücke zwischen index.html, Firebase (Firestore/Auth) und Dropbox.
  *
  * - Der Dropbox-Schlüssel (Refresh-Token) liegt nur hier als Secret, nie im Browser.
- * - Jede Anfrage braucht ein gültiges Firebase-ID-Token (auch anonyme Anmeldung).
- * - Rollen kommen aus Firestore `rollen/{uid}` (gelesen mit dem Service-Konto).
+ * - Büro: Firebase-ID-Token (E-Mail-Anmeldung) + Rolle `buero` in `rollen/{uid}` (gelesen mit dem Service-Konto).
+ * - Baustelle (QR-Code): KEINE Firebase-Anmeldung. Die Etikette trägt einen zufälligen Zugangsschlüssel
+ *   (#k=…, `zugaenge/{schluessel}` = {elementId}). Damit liefert der Worker genau dieses eine Element, seine
+ *   Pläne und Fotos. Schreiben (montiert, Fotos) nur mit Monteur-Sitzung (nach PIN, HMAC-signiert).
  * - Dateipfade sind auf plaene/… und fotos/… begrenzt, Dateien werden nie überschrieben.
  *
  * Secrets:  DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN,
@@ -46,7 +48,7 @@ function corsHeaders(request, env) {
   const erlaubt = String(env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   const h = {
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Monteur, X-Von',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Disposition',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin'
@@ -77,17 +79,33 @@ async function route(request, envRoh, ctx) {
 
   if (was === 'health' && m === 'GET') return health(env);
 
+  // Baustelle: Zugang per Etiketten-Schlüssel, ohne Firebase-Anmeldung
+  if (was === 'scan') {
+    const ip = request.headers.get('CF-Connecting-IP') || 'unbekannt';
+    rateLimit('ip:' + ip, 300);
+    const unter = teile[2] || '';
+    if (unter === 'pin' && m === 'POST') return scanPin(request, env, ip);
+    const z = await zugang(env, url.searchParams.get('k'));
+    if (!unter && m === 'GET') return scanLesen(request, env, z);
+    if (unter === 'datei' && m === 'GET') return scanDatei(env, ctx, z, url.searchParams);
+    if (unter === 'montiert' && m === 'POST') { await mussMonteur(request, env); return scanMontiert(request, env, z); }
+    if (unter === 'foto' && m === 'POST') { await mussMonteur(request, env); return scanFotoHoch(request, env, z); }
+    if (unter === 'foto' && m === 'DELETE') { await mussMonteur(request, env); return scanFotoWeg(env, z, url.searchParams.get('id')); }
+    throw new HttpError(404, 'nicht-gefunden');
+  }
+
+  // Büro: Firebase-Anmeldung mit Rolle «buero»
   const user = await authUser(request, env);
   rateLimit(user.uid, 1200);
 
   if (was === 'me' && m === 'GET') return json({ uid: user.uid, anonym: user.anonym, rolle: await rolleVon(env, user.uid) });
   if (was === 'datei') {
     const d = dateiPfad(url.searchParams.get('pfad'));
+    await mussRolle(env, user, ['buero']);
     if (m === 'POST') return dateiUpload(request, env, user, d);
     if (m === 'GET') return dateiDownload(env, ctx, d);
     if (m === 'DELETE') return dateiLoeschen(env, user, d);
   }
-  if (was === 'monteur-pin' && m === 'POST') return monteurPin(request, env, user);
   throw new HttpError(404, 'nicht-gefunden');
 }
 
@@ -107,7 +125,7 @@ async function health(env) {
    Der Pfad kommt vom Browser, ist aber streng begrenzt:
      plaene/{objektId}/{dateiId}.pdf        nur Büro darf schreiben/löschen
      fotos/{elementId}/{dateiId}.{jpg|…}    Monteur und Büro
-   Lesen darf jede angemeldete Person (wie bisher die Dateien in Firestore).
+   Über diese Endpunkte nur Büro. Die Baustelle liest und schreibt über /api/scan (siehe unten).
    Bestehende Dateien werden nie überschrieben (Dropbox-Modus "add" ohne Umbenennen). */
 const SEG = '[A-Za-z0-9_.-]{1,120}';
 const PFAD_RE = new RegExp(`^(plaene|fotos)/(${SEG})/([A-Za-z0-9_-]{1,80})\\.(pdf|jpg|jpeg|png|webp|heic|heif)$`);
@@ -123,10 +141,8 @@ function dateiPfad(roh) {
   if (art === 'fotos' && ext === 'pdf') throw new HttpError(400, 'pfad-ungueltig', 'Fotos dürfen kein PDF sein');
   return { pfad: p, dbx: '/' + p, art, ext, typ: TYP_VON_EXT[ext], name: p.split('/').pop() };
 }
-const schreibRollen = d => d.art === 'plaene' ? ['buero'] : ['buero', 'monteur'];
 
 async function dateiUpload(request, env, user, d) {
-  await mussRolle(env, user, schreibRollen(d));
   if (d.art === 'fotos') {
     const typ = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
     if (!FOTO_TYPEN.has(typ)) throw new HttpError(415, 'falscher-typ', 'Nur JPEG, PNG, WebP oder HEIC');
@@ -155,29 +171,10 @@ async function dateiDownload(env, ctx, d) {
 }
 
 async function dateiLoeschen(env, user, d) {
-  await mussRolle(env, user, schreibRollen(d));
   await dbxDelete(env, d.dbx);
   const cache = edgeCache();
   if (cache) await cache.delete(new Request('https://cache.pe-etiketten.intern/' + encodeURIComponent(d.pfad))).catch(() => {});
   return json({ ok: true });
-}
-
-/* ---------------------------------------------------------------- Monteur-PIN */
-async function monteurPin(request, env, user) {
-  if (!env.MONTEUR_PIN) throw new HttpError(503, 'pin-nicht-eingerichtet');
-  const ip = request.headers.get('CF-Connecting-IP') || 'unbekannt';
-  await pinSperre(env, ['ip:' + ip, 'uid:' + user.uid]);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
-  const ok = await gleich(String(body.pin || ''), String(env.MONTEUR_PIN));
-  if (!ok) {
-    await pinFehlversuch(env, ['ip:' + ip, 'uid:' + user.uid]);
-    throw new HttpError(403, 'pin-falsch', 'PIN falsch');
-  }
-  const alt = await rolleVon(env, user.uid);
-  if (alt === 'buero') return json({ rolle: 'buero' });
-  await fsSet(env, 'rollen', user.uid, { rolle: 'monteur', seit: Date.now(), via: 'pin' });
-  return json({ rolle: 'monteur' });
 }
 
 const PIN_MAX = 5, PIN_FENSTER = 15 * 60;
@@ -196,10 +193,136 @@ async function pinFehlversuch(env, keys) {
   }
 }
 
+/* ---------------------------------------------------------------- Baustelle (QR-Code mit Schlüssel) */
+const SCHLUESSEL_RE = /^[A-Za-z0-9]{16,64}$/;
+async function zugang(env, k) {
+  if (!SCHLUESSEL_RE.test(k || '')) throw new HttpError(404, 'etikette-unbekannt', 'Etikette unbekannt');
+  const z = await fsGet(env, 'zugaenge', k);
+  if (!z || !z.elementId) throw new HttpError(404, 'etikette-unbekannt', 'Etikette unbekannt');
+  const el = await fsGet(env, 'elemente', z.elementId);
+  if (!el || el.zugang !== k) throw new HttpError(404, 'etikette-unbekannt', 'Etikette unbekannt');
+  // Aufbewahrung: Nach Ablauf (Standard 28 Tage ab Anlegen, «Behalten» verlängert) ist der QR-Code gesperrt,
+  // auch wenn das Büro die Daten noch nicht gelöscht hat.
+  const [obj, set] = await Promise.all([el.objektId ? fsGet(env, 'objekte', el.objektId) : null, fsGet(env, 'settings', 'app')]);
+  if (abgelaufen(obj, set)) throw new HttpError(410, 'abgelaufen', 'Dieser QR-Code ist abgelaufen');
+  return { k, el, id: z.elementId, obj, set };
+}
+export function aufbewahrTage(set) { const n = parseInt(set && set.aufbewahrungTage, 10); return Number.isFinite(n) && n >= 0 ? n : 28; }
+export function abgelaufen(obj, set, jetzt = Date.now()) {
+  if (!obj) return false;
+  const bis = obj.behaltenBis ? Number(obj.behaltenBis) : (aufbewahrTage(set) && obj.created ? Number(obj.created) + aufbewahrTage(set) * 864e5 : null);
+  return bis != null && jetzt > bis;
+}
+const nur = (o, felder) => { const r = {}; for (const f of felder) if (o && o[f] !== undefined && o[f] !== null) r[f] = o[f]; return r; };
+
+async function scanLesen(request, env, z) {
+  const el = z.el;
+  const { obj, set } = z;
+  const [mp, dp] = await Promise.all([
+    el.montagePlanId ? fsGet(env, 'plaene', el.montagePlanId) : null,
+    el.detailPlanId ? fsGet(env, 'plaene', el.detailPlanId) : null
+  ]);
+  const planInfo = p => p ? { name: p.name || 'Plan.pdf', size: p.size || 0, url: p.url || '', datei: !!p.fileId, bereit: p.fertig !== false && String(p.fileId || '').startsWith('dbx:') } : null;
+  return json({
+    element: { id: z.id, ...nur(el, ['pos', 'bezeichnung', 'gewerk', 'geschoss', 'lieferdatum', 'auftragNr', 'barcode', 'status', 'montiert', 'objektId']),
+      fotos: (el.fotos || []).filter(f => f && f.id).map(f => nur(f, ['id', 'ts', 'von'])) },
+    objekt: nur(obj, ['name', 'kunde', 'strasse', 'plzOrt', 'auftragNr', 'lieferdatum']),
+    plaene: { montage: planInfo(mp), detail: planInfo(dp) },
+    logo: set && set.logo ? set.logo : '',
+    monteur: await istMonteur(request, env)
+  });
+}
+
+async function scanDatei(env, ctx, z, q) {
+  let fileId = '', name = '';
+  const art = q.get('art'), foto = q.get('foto');
+  if (art === 'montage' || art === 'detail') {
+    const pid = z.el[art + 'PlanId'];
+    const p = pid ? await fsGet(env, 'plaene', pid) : null;
+    if (!p || !p.fileId) throw new HttpError(404, 'plan-fehlt', 'Kein Plan');
+    fileId = p.fileId; name = p.name || 'Plan.pdf';
+  } else if (foto) {
+    const f = (z.el.fotos || []).find(x => x && x.id === foto);
+    if (!f) throw new HttpError(404, 'foto-fehlt', 'Foto nicht gefunden');
+    fileId = f.id;
+  } else throw new HttpError(400, 'ungueltig');
+  if (!String(fileId).startsWith('dbx:')) throw new HttpError(409, 'noch-nicht-uebertragen', 'Die Datei wird gerade nach Dropbox übertragen. Bitte später nochmals versuchen.');
+  const d = dateiPfad(fileId.slice(4));
+  const res = await dateiDownload(env, ctx, d);
+  return name ? mitDateiname(res, name, d.typ) : res;
+}
+
+// Monteur-Sitzung: «m1.<ablauf>.<signatur>», HMAC mit einem Schlüssel aus PIN und Dropbox-Secret.
+// Ändert das Büro den PIN (Secret MONTEUR_PIN), sind alle bisherigen Sitzungen automatisch ungültig.
+const SITZUNG_TAGE = 365;
+async function sitzungsSchluessel(env) {
+  if (!env.MONTEUR_PIN || !env.DROPBOX_APP_SECRET) throw new HttpError(503, 'pin-nicht-eingerichtet');
+  const roh = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('pe-sitzung|' + env.MONTEUR_PIN + '|' + env.DROPBOX_APP_SECRET));
+  return crypto.subtle.importKey('raw', roh, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+}
+async function sitzungErstellen(env) {
+  const ablauf = Math.floor(Date.now() / 1000) + SITZUNG_TAGE * 86400;
+  const daten = 'm1.' + ablauf;
+  const sig = await crypto.subtle.sign('HMAC', await sitzungsSchluessel(env), new TextEncoder().encode(daten));
+  return daten + '.' + b64url(new Uint8Array(sig));
+}
+async function istMonteur(request, env) {
+  const t = request.headers.get('X-Monteur') || '';
+  const m = /^m1\.(\d{9,12})\.([A-Za-z0-9_-]{20,100})$/.exec(t);
+  if (!m || Number(m[1]) < Date.now() / 1000) return false;
+  try { return await crypto.subtle.verify('HMAC', await sitzungsSchluessel(env), b64urlBytes(m[2]), new TextEncoder().encode('m1.' + m[1])); }
+  catch (e) { return false; }
+}
+async function mussMonteur(request, env) {
+  if (!await istMonteur(request, env)) throw new HttpError(403, 'monteur-pin-noetig', 'Bitte zuerst mit dem Monteur-PIN freischalten');
+}
+
+async function scanPin(request, env, ip) {
+  if (!env.MONTEUR_PIN) throw new HttpError(503, 'pin-nicht-eingerichtet');
+  await pinSperre(env, ['ip:' + ip]);
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const ok = await gleich(String(body.pin || ''), String(env.MONTEUR_PIN));
+  if (!ok) { await pinFehlversuch(env, ['ip:' + ip]); throw new HttpError(403, 'pin-falsch', 'PIN falsch'); }
+  return json({ sitzung: await sitzungErstellen(env) });
+}
+
+async function scanMontiert(request, env, z) {
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const von = String(body.von || '').trim().slice(0, 80);
+  if (body.zurueck) { await fsUpdate(env, 'elemente', z.id, { status: 'geliefert', montiert: null }); return json({ ok: true, status: 'geliefert', montiert: null }); }
+  if (!von) throw new HttpError(400, 'name-fehlt', 'Bitte Namen eintragen');
+  const montiert = { am: Date.now(), von };
+  await fsUpdate(env, 'elemente', z.id, { status: 'montiert', montiert });
+  return json({ ok: true, status: 'montiert', montiert });
+}
+
+const EXT_VON_TYP = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' };
+async function scanFotoHoch(request, env, z) {
+  const typ = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (!EXT_VON_TYP[typ]) throw new HttpError(415, 'falscher-typ', 'Nur JPEG, PNG, WebP oder HEIC');
+  const zufall = Array.from(crypto.getRandomValues(new Uint8Array(10)), b => (b % 36).toString(36)).join('');
+  const d = dateiPfad(`fotos/${z.id}/${Date.now().toString(36)}${zufall}.${EXT_VON_TYP[typ]}`);
+  await dbxUploadStream(env, request, d.dbx, MAX_FOTO, null);
+  let von = ''; try { von = decodeURIComponent(request.headers.get('X-Von') || ''); } catch (e) {}
+  const eintrag = { id: 'dbx:' + d.pfad, ts: Date.now(), von: von.trim().slice(0, 80) };
+  await fsArrayAnhaengen(env, 'elemente', z.id, 'fotos', eintrag);
+  return json({ ok: true, foto: eintrag });
+}
+
+async function scanFotoWeg(env, z, id) {
+  const f = (z.el.fotos || []).find(x => x && x.id === id);
+  if (!f) return json({ ok: true });
+  await fsUpdate(env, 'elemente', z.id, { fotos: (z.el.fotos || []).filter(x => x && x.id !== id) });
+  if (String(id).startsWith('dbx:')) await dbxDelete(env, dateiPfad(id.slice(4)).dbx);
+  return json({ ok: true });
+}
+
 /* ---------------------------------------------------------------- Rollen */
 async function rolleVon(env, uid) {
   const r = await fsGet(env, 'rollen', uid);
-  return r && ['buero', 'monteur'].includes(r.rolle) ? r.rolle : 'extern';
+  return r && r.rolle === 'buero' ? 'buero' : 'extern';
 }
 async function mussRolle(env, user, erlaubt) {
   const r = await rolleVon(env, user.uid);
@@ -296,10 +419,20 @@ export async function fsGet(env, coll, id) {
   return { ...vonFs({ mapValue: { fields: d.fields || {} } }), __id: id };
 }
 
-async function fsSet(env, coll, id, obj) {
-  const fields = zuFs(obj).mapValue.fields;
-  const r = await fetch(fsUrl(env, coll, id), { method: 'PATCH', headers: { Authorization: 'Bearer ' + await saToken(env), 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
-  if (!r.ok) { console.error('Firestore set', coll, id, r.status, await r.text()); throw new HttpError(502, 'firestore-fehler'); }
+function fsName(env, coll, id) { return `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${coll}/${id}`; }
+// Felder eines bestehenden Dokuments ändern (legt nie ein neues an)
+async function fsUpdate(env, coll, id, felder) {
+  const maske = Object.keys(felder).map(k => 'updateMask.fieldPaths=' + encodeURIComponent(k)).join('&');
+  const r = await fetch(fsUrl(env, coll, id) + '?currentDocument.exists=true&' + maske, { method: 'PATCH', headers: { Authorization: 'Bearer ' + await saToken(env), 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: zuFs(felder).mapValue.fields }) });
+  if (r.status === 404 || r.status === 400) throw new HttpError(404, 'element-fehlt', 'Element nicht mehr vorhanden');
+  if (!r.ok) { console.error('Firestore update', coll, id, r.status, await r.text()); throw new HttpError(502, 'firestore-fehler'); }
+}
+// Wert an eine Liste anhängen (wie arrayUnion), ohne die übrige Liste zu lesen
+async function fsArrayAnhaengen(env, coll, id, feld, wert) {
+  const basis = `${env.__FIRESTORE_URL || 'https://firestore.googleapis.com'}/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:commit`;
+  const r = await fetch(basis, { method: 'POST', headers: { Authorization: 'Bearer ' + await saToken(env), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ writes: [{ transform: { document: fsName(env, coll, id), fieldTransforms: [{ fieldPath: feld, appendMissingElements: { values: [zuFs(wert)] } }] }, currentDocument: { exists: true } }] }) });
+  if (!r.ok) { console.error('Firestore commit', coll, id, r.status, await r.text()); throw new HttpError(502, 'firestore-fehler'); }
 }
 
 export function vonFs(v) {
@@ -441,4 +574,4 @@ function b64Bytes(s) { const b = atob(s); const u = new Uint8Array(b.length); fo
 function b64urlBytes(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return b64Bytes(s); }
 function b64urlText(s) { return new TextDecoder().decode(b64urlBytes(s)); }
 
-export const __test = { MEM, headerJson, zuFs, dateiPfad };
+export const __test = { MEM, headerJson, zuFs, dateiPfad, sitzungErstellen, abgelaufen };

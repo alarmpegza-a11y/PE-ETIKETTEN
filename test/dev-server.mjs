@@ -4,7 +4,7 @@
 // Start:  node test/dev-server.mjs            -> http://localhost:8788/            (mit Worker/Dropbox)
 //                                              http://localhost:8788/alt.html    (ohne Worker, Dateien in Firestore)
 // Optionen: ALT_REGELN=1 (alte, offene Firestore-Regeln nachbilden)
-// Testkonto Büro: buero@test.ch / test1234     Monteur-PIN: 123456
+// Testkonto Büro: buero@test.ch / test1234     Monteur-PIN: 123456   (Baustelle: #k=<Schlüssel>, ohne Anmeldung)
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
@@ -44,26 +44,14 @@ const DBX = new Map();
 const sse = new Set();
 const melde = p => { for (const r of sse) r.write(`data: ${JSON.stringify({ path: p })}\n\n`); };
 
-function rolle(uid) { const r = uid && DB.get('rollen/' + uid); return r && ['buero', 'monteur'].includes(r.rolle) ? r.rolle : 'extern'; }
-function erlaubt(art, pfad, uid, neu, alt) {
+function rolle(uid) { const r = uid && DB.get('rollen/' + uid); return r && r.rolle === 'buero' ? 'buero' : 'extern'; }
+// Bildet firestore.rules nach: nur Büro (anonyme Anmeldung gibt es nicht mehr)
+function erlaubt(art, pfad, uid) {
   if (!uid) return false;
   const [coll, id] = pfad.split('/');
   if (ALT) return ['objekte', 'plaene', 'elemente', 'settings', 'dateien'].includes(coll);
-  const r = rolle(uid), buero = r === 'buero', monteur = r === 'monteur' || buero;
   if (coll === 'rollen') return art === 'get' && id === uid;
-  if (coll === 'dateien') return art === 'get' || art === 'list' ? true : buero;
-  if (['objekte', 'plaene', 'barcodes'].includes(coll)) return art === 'get' ? true : buero;
-  if (coll === 'settings') return art === 'get' ? true : art === 'list' ? false : buero;
-  if (coll === 'elemente') {
-    if (art === 'get') return true;
-    if (art === 'update') {
-      if (buero) return true; if (!monteur) return false;
-      const keys = new Set([...Object.keys(neu || {}), ...Object.keys(alt || {})]);
-      const geaendert = [...keys].filter(k => JSON.stringify(neu[k]) !== JSON.stringify(alt[k]));
-      return geaendert.every(k => ['status', 'montiert', 'fotos'].includes(k));
-    }
-    return buero;
-  }
+  if (['objekte', 'plaene', 'elemente', 'settings', 'zugaenge', 'dateien'].includes(coll)) return rolle(uid) === 'buero' && !String(uid).startsWith('anon_');
   return false;
 }
 function anwenden(alt, data, merge) {
@@ -92,7 +80,8 @@ const send = (res, status, obj, h = {}) => { res.writeHead(status, { 'Content-Ty
 async function seite(datei, mitWorker) {
   let s = await readFile(path.join(ROOT, 'index.html'), 'utf8');
   s = s.replace(/https:\/\/www\.gstatic\.com\/firebasejs\/[\d.]+\/(firebase-[a-z]+)\.js/g, '/test/mock/$1.js');
-  if (mitWorker) s = s.replace("const WORKER_URL='';", 'const WORKER_URL=location.origin;');
+  // Immer den lokalen Worker verwenden (nie den echten), ohne Worker: leere Adresse
+  s = s.replace(/const WORKER_URL='[^']*';/, mitWorker ? 'const WORKER_URL=location.origin;' : "const WORKER_URL='';");
   return s;
 }
 
@@ -133,9 +122,25 @@ http.createServer(async (req, res) => {
     }
     // Firestore REST (Worker, Service-Konto)
     if (p.startsWith('/mockfs/')) {
-      const k = decodeURIComponent(p.split('/documents/')[1]);
+      const k = decodeURIComponent((p.split('/documents/')[1] || ''));
       if (req.method === 'GET') { const x = DB.get(k); return x ? send(res, 200, { name: k, fields: __test.zuFs(x).mapValue.fields }) : send(res, 404, {}); }
-      if (req.method === 'PATCH') { const d = JSON.parse(await body(req)); DB.set(k, vonFs({ mapValue: { fields: d.fields } })); melde(k); return send(res, 200, {}); }
+      if (req.method === 'PATCH') {
+        const d = JSON.parse(await body(req)); const maske = url.searchParams.getAll('updateMask.fieldPaths');
+        if (url.searchParams.get('currentDocument.exists') === 'true' && !DB.has(k)) return send(res, 404, {});
+        const n = vonFs({ mapValue: { fields: d.fields } });
+        if (maske.length) { const x = { ...(DB.get(k) || {}) }; for (const f of maske) { if (f in n) x[f] = n[f]; else delete x[f]; } DB.set(k, x); } else DB.set(k, n);
+        melde(k); return send(res, 200, {});
+      }
+      if (req.method === 'POST' && p.endsWith(':commit')) {
+        for (const w of JSON.parse(await body(req)).writes) {
+          const key = w.transform.document.split('/documents/')[1];
+          if (!DB.has(key)) return send(res, 404, {});
+          const x = { ...DB.get(key) };
+          for (const t of w.transform.fieldTransforms) { const arr = [...(x[t.fieldPath] || [])]; for (const v of t.appendMissingElements.values) arr.push(vonFs(v)); x[t.fieldPath] = arr; }
+          DB.set(key, x); melde(key);
+        }
+        return send(res, 200, {});
+      }
     }
     // Dropbox
     if (p === '/dbx/oauth2/token') return send(res, 200, { access_token: 'dbx-token', expires_in: 14400 });

@@ -481,7 +481,7 @@ html:has(body.modus-scan),body.modus-scan{overflow-x:hidden;max-width:100%}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, arrayUnion, arrayRemove, Bytes, runTransaction } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getStorage, ref as sRef, uploadBytesResumable, getBlob, deleteObject } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js';
 window.__peStart=true;
 
@@ -597,6 +597,14 @@ function getFile(id){
   if(ladeLaeuft.has(id)) return ladeLaeuft.get(id);
   const p=(async()=>{
     const c=await DB.get(id).catch(()=>null); if(c) return c;
+    // Baustelle ohne Anmeldung: Pläne («scan:<art>:…») und Fotos über den Etiketten-Schlüssel
+    if(String(id).startsWith('scan:')||(scanModus()&&istDbx(id))){
+      try{
+        const teil=String(id).startsWith('scan:')?'&art='+id.split(':')[1]:'&foto='+encodeURIComponent(id);
+        const r=await apiLaden('/api/scan/datei'+scanK()+teil,(n,t)=>meldeFortschritt(id,n,t,true),true);
+        const f={id,name:id.split('/').pop(),type:r.type,data:r.data}; DB.put(f).catch(()=>{}); return f;
+      }catch(err){ console.warn('Datei nicht ladbar',id,err); DATEI_FEHLER.set(id,{404:'fehlt',409:'uebertragung',410:'abgelaufen'}[err.status]||'netz'); return null; }
+    }
     if(istDbx(id)){
       if(!DROPBOX){ DATEI_FEHLER.set(id,'netz'); return null; }
       try{
@@ -647,12 +655,13 @@ async function api(pfad,{method='GET',body,headers={}}={},versuch=0){
   return r;
 }
 // Download mit Fortschritt; bricht ab, wenn 60 s lang nichts ankommt (4G auf der Baustelle)
-async function apiLaden(pfad,onFortschritt){
+async function apiLaden(pfad,onFortschritt,scan=false){
   const ctrl=new AbortController(); let wd=setTimeout(()=>ctrl.abort(),60000);
   const weiter=()=>{ clearTimeout(wd); wd=setTimeout(()=>ctrl.abort(),60000); };
   try{
-    const hol=async neu=>{ try{ return await fetch(WORKER_URL+pfad,{headers:{Authorization:'Bearer '+await idToken(neu)},signal:ctrl.signal}); }catch(err){ if(err instanceof ApiFehler||err.name==='AbortError') throw err; throw new ApiFehler(0,'netz','Keine Verbindung'); } };
-    let r=await hol(false); if(r.status===401) r=await hol(true);
+    const kopf=async neu=>scan?(monteurSitzung()?{'X-Monteur':monteurSitzung()}:{}):{Authorization:'Bearer '+await idToken(neu)};
+    const hol=async neu=>{ try{ return await fetch(WORKER_URL+pfad,{headers:await kopf(neu),signal:ctrl.signal}); }catch(err){ if(err instanceof ApiFehler||err.name==='AbortError') throw err; throw new ApiFehler(0,'netz','Keine Verbindung'); } };
+    let r=await hol(false); if(r.status===401&&!scan) r=await hol(true);
     if(!r.ok) throw await apiFehlerAus(r);
     const total=Number(r.headers.get('Content-Length'))||0;
     if(!r.body||!r.body.getReader) return {data:await r.arrayBuffer(),type:r.headers.get('Content-Type')||''};
@@ -706,7 +715,8 @@ function saveSettings(fields){ Object.assign(S.settings,fields); fire(setDoc(ref
 /* Rollen: 'buero' (Konsole, rollen/{uid}), 'monteur' (nach PIN, setzt der Worker), sonst 'extern' (nur lesen) */
 let ROLLE=null, REGELN_ALT=false;
 const istBuero=()=>ROLLE==='buero';
-const darfMontage=()=>ROLLE==='buero'||ROLLE==='monteur';
+// Monteur: Handy mit gültiger Monteur-Sitzung (PIN, vom Worker geprüft). Büro darf alles.
+const darfMontage=()=>ROLLE==='buero'||(scanModus()&&!!(SCAN.daten&&SCAN.daten.monteur));
 // Büro und Produktion (und alles unter den alten, offenen Regeln) laden die ganze Datenbank, Monteure nur ihr Element
 const volleDaten=()=>istBuero()||REGELN_ALT;
 
@@ -779,7 +789,7 @@ function starteListener(neu=false){
       if(!bereit[name]){ bereit[name]=true; pruefeStart(); }
       else if(geaendert) planRender();
       pruefeAufbewahrung();
-      if(name==='elemente') barcodesPflegen();
+      if(name==='elemente') zugaengePflegen();
       autoMigration();
     },syncFehler));
   }
@@ -793,37 +803,29 @@ function starteListener(neu=false){
 }
 function alleListenerStopp(){
   abmelden.forEach(u=>{ try{ u(); }catch(e){} }); abmelden=[]; listenerLaeuft=false;
-  scanStopp(); if(lisSettings){ try{ lisSettings(); }catch(e){} lisSettings=null; }
-  if(lisBarcodes){ try{ lisBarcodes(); }catch(e){} lisBarcodes=null; barcodesStand=null; }
+  scanStopp();
+  if(lisZugaenge){ try{ lisZugaenge(); }catch(e){} lisZugaenge=null; zugaengeStand=null; }
   for(const k in bereit) bereit[k]=false; for(const k in meta) delete meta[k];
   Object.assign(S,{objekte:[],plaene:[],elemente:[],aktivObjekt:null,aktivOrdner:'*',aktivElement:null,scanElement:null,gestartet:false}); S.auswahl.clear();
   aufbewahrungGeprueft=false;
 }
-// Einstellungen allein (Monteur-Ansicht ohne volle Daten): Logo, Layout, Adresse
-let lisSettings=null;
-function starteSettingsEinzeln(){
-  if(lisSettings||listenerLaeuft) return;
-  lisSettings=onSnapshot(ref('settings','app'),snap=>{ S.settings=snap.exists()?snap.data():{}; qrCache.clear(); applyLogo(); applyLayout(); planRender(); },err=>console.warn('Einstellungen nicht ladbar',err));
+/* Zugangsschlüssel: Jede Etikette trägt einen zufälligen, nicht erratbaren Schlüssel (#k=…) statt der Nummer.
+   zugaenge/{schluessel} = {elementId}. Nur damit liefert der Worker der Baustelle ein Element. Das Büro pflegt beides automatisch. */
+function neuerSchluessel(){ const z='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'; return Array.from(crypto.getRandomValues(new Uint8Array(22)),b=>z[b%62]).join(''); }
+function sichereZugang(e){ if(e&&!e.zugang&&istBuero()) patch('elemente',e.id,{zugang:neuerSchluessel()}); return e; }
+let lisZugaenge=null, zugaengeStand=null;
+function starteZugaenge(){
+  if(lisZugaenge||!istBuero()||REGELN_ALT) return;
+  lisZugaenge=onSnapshot(collection(fs,'zugaenge'),snap=>{ if(snap.metadata.fromCache) return; zugaengeStand=new Map(snap.docs.map(d=>[d.id,d.data().elementId])); zugaengePflegen(); },err=>console.warn('Zugänge nicht ladbar',err));
 }
-/* Barcode-Verzeichnis barcodes/{Betriebsauftrag} = {elementId}: nur für Elemente, deren ID nicht "ba_"+Nummer ist.
-   Damit findet die Monteur-Ansicht ein Element per #b=…, ohne alle Elemente laden zu dürfen. Das Büro pflegt es automatisch. */
-let lisBarcodes=null, barcodesStand=null;
-function starteBarcodes(){
-  if(lisBarcodes||!istBuero()||REGELN_ALT) return;
-  lisBarcodes=onSnapshot(collection(fs,'barcodes'),snap=>{ if(snap.metadata.fromCache) return; barcodesStand=new Map(snap.docs.map(d=>[d.id,d.data().elementId])); barcodesPflegen(); },err=>console.warn('Barcodes nicht ladbar',err));
-}
-const barcodesPflegen=debounce(()=>{
-  if(!barcodesStand||!istBuero()||REGELN_ALT||!meta.elemente||meta.elemente.fromCache) return;
-  const soll=new Map();
-  for(const e of S.elemente){
-    const bc=String(e.barcode||'').trim();
-    if(!bc||!/^[A-Za-z0-9_.-]{1,100}$/.test(bc)||e.id==='ba_'+bc||e.id==='ba_'+schluessel(bc)) continue;
-    soll.set(bc,e.id);
-  }
+const zugaengePflegen=debounce(()=>{
+  if(!zugaengeStand||!istBuero()||REGELN_ALT||!meta.elemente||meta.elemente.fromCache) return;
   let n=0;
-  for(const [bc,id] of soll) if(barcodesStand.get(bc)!==id&&n++<300) fire(setDoc(ref('barcodes',bc),{elementId:id}));
-  for(const bc of barcodesStand.keys()) if(!soll.has(bc)&&n++<300) fire(deleteDoc(ref('barcodes',bc)));
-},2000);
+  for(const e of S.elemente) if(!e.zugang&&n++<300) patch('elemente',e.id,{zugang:neuerSchluessel()});
+  const soll=new Map(S.elemente.filter(e=>e.zugang).map(e=>[e.zugang,e.id]));
+  for(const [k,id] of soll) if(zugaengeStand.get(k)!==id&&n++<600) fire(setDoc(ref('zugaenge',k),{elementId:id}));
+  for(const k of zugaengeStand.keys()) if(!soll.has(k)&&n++<900) fire(deleteDoc(ref('zugaenge',k)));
+},1500);
 function pruefeStart(){
   if(S.gestartet||!Object.values(bereit).every(Boolean)) return;
   S.gestartet=true; S.aktivObjekt=ersteObjektId(); applyLogo(); route();
@@ -879,6 +881,7 @@ function payloadFor(e){
 // Kurzer Link mit dem Betriebsauftrag (= Barcode): #b=2026102735. Ältere Formate #a= und #e= bleiben lesbar.
 function hashFor(e){
   const o=obj(e.objektId)||{};
+  if(e.zugang) return 'k='+e.zugang;
   if(e.barcode) return 'b='+encodeURIComponent(e.barcode);
   if(schluessel(o.auftragNr)&&schluessel(e.pos)) return 'a='+encodeURIComponent(o.auftragNr)+'&p='+encodeURIComponent(e.pos)+(o.name?'&o='+encodeURIComponent(o.name):'');
   return 'e='+enc(payloadFor(e));
@@ -1003,12 +1006,12 @@ function objektPasst(o){
 /* ---------- Aufbewahrung: Objekte werden X Monate nach dem Anlegen automatisch gelöscht ----------
    Standard 3 Monate (Einstellungen, 0 = nie). «Behalten» verschiebt die Frist (behaltenBis).
    Gelöscht wird nur in der Büro-Ansicht und erst, wenn alle Daten frisch vom Server da sind (nicht aus dem Offline-Cache). */
-const aufbewahrMonate=()=>{ const n=parseInt(S.settings.aufbewahrung,10); return isFinite(n)&&n>=0?n:3; };
-const plusMonate=(ts,m)=>{ const d=new Date(ts); d.setMonth(d.getMonth()+m); return d.getTime(); };
+// Aufträge sind 28 Tage ab dem Anlegen bzw. Import online (Einstellungen, 0 = nie). Danach sperrt auch der Worker den QR-Code.
+const aufbewahrTage=()=>{ const n=parseInt(S.settings.aufbewahrungTage,10); return isFinite(n)&&n>=0?n:28; };
 function loeschDatum(o){
   if(o.behaltenBis) return o.behaltenBis;
-  const m=aufbewahrMonate(); if(!m||!o.created) return null;
-  return plusMonate(o.created,m);
+  const t=aufbewahrTage(); if(!t||!o.created) return null;
+  return o.created+t*864e5;
 }
 function restTage(o){ const d=loeschDatum(o); return d==null?null:Math.max(0,Math.ceil((d-Date.now())/864e5)); }
 const fmtDatum=ts=>new Date(ts).toLocaleDateString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric'});
@@ -1096,7 +1099,7 @@ function renderObjekt(){
         <div><dt>Adresse</dt><dd>${[o.strasse,o.plzOrt].filter(Boolean).map(h).join(', ')||'–'}</dd></div>
         <div><dt>Auftrag</dt><dd>${h(o.auftragNr)||'–'}</dd></div>
         <div><dt>Lieferdatum</dt><dd>${fmt(o.lieferdatum)}</dd></div>
-        ${loeschDatum(o)!=null?`<div><dt>Automatisch gelöscht am</dt><dd class="frist${restTage(o)<=14?' bald':''}">${fmtDatum(loeschDatum(o))} <button class="btn sm" data-act="objektBehalten" title="Frist um ${aufbewahrMonate()||3} Monate verlängern">Behalten</button></dd></div>`:''}
+        ${loeschDatum(o)!=null?`<div><dt>Automatisch gelöscht am</dt><dd class="frist${restTage(o)<=14?' bald':''}">${fmtDatum(loeschDatum(o))} <button class="btn sm" data-act="objektBehalten" title="Frist um ${aufbewahrTage()||28} Tage verlängern">Behalten</button></dd></div>`:''}
       </dl></div>
       <div class="block-aktionen">
         ${ordAkt?`<button class="btn" data-act="ordnerUmbenennen">Unterordner umbenennen</button><button class="btn danger" data-act="ordnerLoeschen">Unterordner löschen</button>`:''}
@@ -1141,6 +1144,7 @@ function renderVorschau(){
   let e=elem(S.aktivElement); if(e&&(!o||e.objektId!==o.id)) e=null;
   if(e&&!imOrdner(e,S.aktivOrdner)) e=null;
   if(!e&&o){ e=elementeImBlick(o)[0]||null; S.aktivElement=e?e.id:null; }
+  sichereZugang(e);
   if(!e){ box.innerHTML=`<div class="vs-kopf"><h2 class="vs-titel">Etikette</h2></div><p class="leer">Sobald ein Element erfasst ist, erscheint hier die Etikette in Originalgrösse.</p>`; return; }
   const link=linkFor(e); const L=layout();
   box.innerHTML=`
@@ -1603,8 +1607,8 @@ const ACT={
     await montageExport(dir);
   },
   objektBehalten(){
-    const o=obj(S.aktivObjekt); if(!o) return; const m=aufbewahrMonate()||3;
-    const bis=plusMonate(Math.max(Date.now(),loeschDatum(o)||Date.now()),m);
+    const o=obj(S.aktivObjekt); if(!o) return; const t=aufbewahrTage()||28;
+    const bis=Math.max(Date.now(),loeschDatum(o)||Date.now())+t*864e5;
     patch('objekte',o.id,{behaltenBis:bis}); renderAll(); toast(`Objekt bleibt bis ${fmtDatum(bis)}`);
   },
   async objektLoeschenKnopf(){
@@ -1658,11 +1662,9 @@ const ACT={
       <div class="feld voll"><span>Firmenlogo auf der Etikette</span><div class="logo-vorschau">${logoMarkup()}</div>
         <input type="file" name="logoFile" accept="image/png,image/jpeg,image/svg+xml,image/webp">
         <label class="check"><input type="checkbox" name="logoReset" ${S.settings.logo?'':'disabled'}> Standardlogo verwenden</label></div>
-      ${feld('aufbewahrung','Objekte automatisch löschen nach (Monaten)',String(aufbewahrMonate()),{type:'number'})}
-      <p class="leer" style="align-self:end">Gezählt ab dem Anlegen des Objekts. 0 = nie automatisch löschen. Pro Objekt verlängerbar mit «Behalten».</p>
-      ${DROPBOX?`<div class="feld voll"><span>Monteur-PIN</span><p class="leer" style="margin:0">Der PIN für Fotos und Montagemeldungen ist sicher beim Worker hinterlegt (Cloudflare, Secret MONTEUR_PIN), nicht in der Datenbank.</p></div>`
-      :`${feld('fotoCode','Code für Fotos (Monteure)',fotoCodeSoll(),{ph:'8852'})}
-      <p class="leer" style="align-self:end">Monteure geben den Code einmal pro Handy ein. Nach einer Änderung ist er auf allen Handys neu nötig.</p>`}
+      ${feld('aufbewahrungTage','Aufträge automatisch löschen nach (Tagen)',String(aufbewahrTage()),{type:'number'})}
+      <p class="leer" style="align-self:end">Gezählt ab dem Anlegen bzw. Excel-Import. Danach funktionieren die QR-Codes nicht mehr, Pläne und Fotos werden gelöscht. 0 = nie. Pro Auftrag verlängerbar mit «Behalten».</p>
+      <div class="feld voll"><span>Monteur-PIN</span><p class="leer" style="margin:0">Der PIN für Fotos und Montagemeldungen ist nur beim Worker hinterlegt (Cloudflare, Secret MONTEUR_PIN), nicht im Quellcode und nicht in der Datenbank. Ein neuer PIN macht alle bisher freigeschalteten Handys ungültig.</p></div>
       ${DROPBOX?`<div class="feld voll"><span>Speicherort für Pläne und Fotos</span>
         <p class="leer" style="margin:0">Dropbox (über den Worker). Neue Pläne und Fotos gehen automatisch dorthin. Ältere Dateien werden automatisch im Hintergrund übertragen, sobald das Büro geöffnet ist (jede Datei wird geprüft, erst dann wird die alte gelöscht).</p></div>`
       :`<div class="feld voll"><span>Speicherort für Pläne und Fotos</span>
@@ -1673,8 +1675,7 @@ const ACT={
     const r=await dialog('Einstellungen',body); if(!r) return;
     const url=String(r.data.baseUrl||'').trim().split('#')[0];
     const f={baseUrl:url||''}; if(!DROPBOX) f.speicher=r.data.speicherStorage?'storage':'firestore';
-    const code=String(r.data.fotoCode||'').trim(); if(code) f.fotoCode=code;
-    const mon=parseInt(r.data.aufbewahrung,10); f.aufbewahrung=isFinite(mon)&&mon>=0?mon:3;
+    const tg=parseInt(r.data.aufbewahrungTage,10); f.aufbewahrungTage=isFinite(tg)&&tg>=0?tg:28;
     const lf=r.form.querySelector('[name=logoFile]').files[0];
     if(r.data.logoReset) f.logo='';
     else if(lf){ if(lf.size>600*1024){ toast('Logo ist zu gross (max. 600 KB)'); } else f.logo=await fileToDataUrl(lf); }
@@ -1703,16 +1704,19 @@ const ACT={
   },
   layoutTestdruck(){ const o=obj(S.aktivObjekt); const e=elem(S.aktivElement)||(o&&elementeVon(o.id)[0])||S.elemente[0]; if(e) drucken([e],true); },
   layoutStandard(){ const f=$('#dlg form'); if(!f) return; for(const [,k] of LAYOUT_FELDER) f.elements[k].value=LAYOUT_STD[k]; f.elements.logo.checked=LAYOUT_STD.logo; if(layoutVorschau) layoutVorschau(); },
-  montiertMelden(){
+  async montiertMelden(){
     const e=elem(S.scanElement); if(!e) return;
-    if(DROPBOX&&!darfMontage()){ codeAbfragen('montiert'); return; }
+    if(!darfMontage()){ codeAbfragen('montiert'); return; }
     const inp=$('#monteurName'); const von=(inp&&inp.value||'').trim();
     if(!von){ toast('Bitte zuerst deinen Namen eintragen'); if(inp) inp.focus(); return; }
+    LS.set('monteurName',von);
+    if(scanModus()){ await scanMontage({von}); return; }
     patch('elemente',e.id,{status:'montiert',montiert:{am:Date.now(),von}}); toast('Als montiert gemeldet'); renderScanElement(e);
   },
-  montageZurueck(){
+  async montageZurueck(){
     const e=elem(S.scanElement); if(!e) return;
-    if(DROPBOX&&!darfMontage()){ codeAbfragen('montiert'); return; }
+    if(!darfMontage()){ codeAbfragen('montiert'); return; }
+    if(scanModus()){ await scanMontage({zurueck:true}); return; }
     patch('elemente',e.id,{status:'geliefert',montiert:null}); toast('Meldung zurückgenommen'); renderScanElement(e);
   },
   zurVerwaltung(){
@@ -1772,6 +1776,7 @@ async function planLoeschen(p){
 /* ---------- Druck ---------- */
 function drucken(els,einmal=false){
   if(!els.length){ toast('Keine Etiketten ausgewählt'); return; }
+  els.forEach(sichereZugang); qrCache.clear();
   // Jede Etikette so oft wie bei «Anzahl» eingestellt (Testdruck: einmal)
   const a=$('#print-area'); a.innerHTML=els.map(e=>{ const l=labelHTML(e); return einmal?l:l.repeat(anz(e)); }).join('');
   const imgs=$$('img',a);
@@ -1819,7 +1824,7 @@ function renderScan(code){
   box.innerHTML=`<div class="sc">${scanKopf()}
     <section class="sc-held"><p class="sc-pos">${h(p.n)}</p><h1>${h(p.b)}</h1>${p.g?`<p class="sc-gewerk">${h(p.g)}</p>`:''}</section>
     <dl class="sc-daten">${zeile('Objekt',p.o)}${zeile('Kunde',p.k)}${zeile('Adresse',[p.s,p.p].filter(Boolean).join(', '))}${zeile('Geschoss',p.e)}${zeile('Lieferdatum',fmt(p.d))}${zeile('Auftrag',p.a)}${zeile('Barcode',p.bc)}</dl>
-    <p class="sc-info">Dieses Element ist nicht mehr in der Datenbank. Angezeigt werden die Angaben aus dem QR-Code. Bitte im Büro nachfragen.</p>
+    <p class="sc-info">${istBuero()?'Dieses Element ist nicht mehr in der Datenbank. Angezeigt werden die Angaben aus dem QR-Code.':'Ältere Etikette: Angezeigt werden nur die Angaben aus dem QR-Code. Für Pläne und Fotos bitte im Büro eine neue Etikette drucken lassen.'}</p>
     ${p.m||p.t?`<section class="sc-block"><h2>Pläne</h2>${p.m?`<div class="pk"><div class="pk-text"><strong>Montageplan</strong><span>${h(p.mn||'')}</span></div><div class="pk-akt"><a class="btn primary" href="${h(p.m)}" target="_blank" rel="noopener">Öffnen</a></div></div>`:''}${p.t?`<div class="pk"><div class="pk-text"><strong>Detailplan</strong><span>${h(p.dn||'')}</span></div><div class="pk-akt"><a class="btn primary" href="${h(p.t)}" target="_blank" rel="noopener">Öffnen</a></div></div>`:''}</section>`:''}
     ${zurVerwaltungFuss()}</div>`;
   syncStatus();
@@ -1844,7 +1849,7 @@ function renderScanElement(e){
     <section class="sc-block"><h2>Pläne</h2><div id="pkMontage"></div><div id="pkDetail"></div></section>
     <section class="sc-block"><h2>Montage</h2>
       <div class="sc-stapel">
-        <label class="feld"><span>Monteur</span><input id="monteurName" value="" placeholder="Vor- und Nachname" autocomplete="off"></label>
+        <label class="feld"><span>Monteur</span><input id="monteurName" value="${h(LS.get('monteurName','')||'')}" placeholder="Vor- und Nachname" autocomplete="name"></label>
         ${e.montiert?`<div class="sc-montiert">Montiert am ${fmtTs(e.montiert.am)}<small>gemeldet von ${h(e.montiert.von||'–')}</small></div>
           <button class="btn" data-act="montageZurueck">Meldung zurücknehmen</button>`
         :`<button class="btn primary gross" data-act="montiertMelden">Als montiert melden</button>`}
@@ -1898,7 +1903,7 @@ function pkZeichnen(id){
       el.innerHTML=kopf+`</div><div class="pk-akt"><a class="btn primary" href="${c.url}" target="_blank" rel="noopener">PDF öffnen</a>${teilen?`<button class="btn" data-pk-teilen="${id}">Senden / Speichern</button>`:''}<a class="btn" href="${c.url}" download="${h(p.name)}">Herunterladen</a></div>`;
     }else{
       const txt={fehlt:'Die Datei ist nicht in der Datenbank. Der Upload im Büro wurde wohl nicht abgeschlossen, bitte dort neu hochladen.',unvollstaendig:'Die Datei ist unvollständig. Der Upload im Büro wurde wohl abgebrochen, bitte dort neu hochladen.',netz:'Keine Verbindung oder zu langsam. Bitte erneut versuchen.'}[c.fehler]||'Die Datei konnte nicht geladen werden.';
-      el.innerHTML=kopf+`<span class="pk-status fehler">${txt}</span></div><div class="pk-akt"><button class="btn primary" data-pk-laden="${id}">Erneut versuchen</button></div>`;
+      el.innerHTML=kopf+`<span class="pk-status fehler">${h(txt)}</span></div><div class="pk-akt"><button class="btn primary" data-pk-laden="${id}">Erneut versuchen</button></div>`;
     }
   });
 }
@@ -1962,49 +1967,41 @@ async function komprimieren(file){
     return b||file;
   }catch(err){ return file; }
 }
-// Fotos nur mit Code (Einstellungen, Standard 8852). Einmal pro Gerät eingeben, ändert das Büro den Code, ist er neu nötig.
-// Hinweis: Das ist eine Hürde gegen Fremde mit dem Link, kein echter Schutz (der Code steht in der Datenbank).
-const fotoCodeSoll=()=>String(S.settings.fotoCode||'8852');
-// Mit Worker: echter PIN, vom Worker geprüft, danach Rolle «monteur» für dieses Handy
-const fotoFrei=()=>DROPBOX?darfMontage():LS.get('fotoCode')===fotoCodeSoll();
+// Fotos und Montagemeldungen nur mit Monteur-PIN (prüft der Worker) oder als Büro
+const fotoFrei=()=>darfMontage();
 // Kleines Fenster für den Code. Nach dem richtigen Code öffnet sich Kamera bzw. Galerie direkt
 // (input.click() im selben Tipp, sonst blockiert iOS das Öffnen).
 function codeAbfragen(ziel){
   const d=$('#dlg'); d.classList.remove('breit');
   d.innerHTML=`<form class="dlg-form" id="codeDlg" data-ziel="${ziel}" novalidate autocomplete="off"><h2>Code eingeben</h2>
-    <div class="dlg-body code-fenster"><p class="leer">${DROPBOX?'Für Fotos und Montagemeldungen ist der Monteur-PIN nötig. Das Handy bleibt danach freigeschaltet.':'Für Fotos ist ein Code nötig. Er wird auf diesem Handy gespeichert.'}</p>
+    <div class="dlg-body code-fenster"><p class="leer">Für Fotos und Montagemeldungen ist der Monteur-PIN nötig. Das Handy bleibt danach freigeschaltet.</p>
       <input id="codeEingabe" type="password" inputmode="numeric" pattern="[0-9]*" aria-label="Code" autocomplete="off"><p class="fehler" id="codeFehler"></p></div>
-    <div class="dlg-fuss"><span class="spacer"></span><button type="button" class="btn" data-code-abbruch>Abbrechen</button><button type="submit" class="btn primary">${DROPBOX||ziel==='montiert'?'Freischalten':ziel==='kamera'?'Kamera öffnen':'Galerie öffnen'}</button></div></form>`;
+    <div class="dlg-fuss"><span class="spacer"></span><button type="button" class="btn" data-code-abbruch>Abbrechen</button><button type="submit" class="btn primary">Freischalten</button></div></form>`;
   d.onclose=null; d.oncancel=null; d.showModal();
   setTimeout(()=>{ const i=$('#codeEingabe'); if(i) i.focus(); },50);
 }
 async function codePruefenUndOeffnen(form){
+  // iOS öffnet Kamera/Galerie nach einer Netzwerk-Prüfung nicht mehr automatisch, darum danach nochmals tippen
   const i=$('#codeEingabe'); const v=(i&&i.value||'').trim();
-  if(DROPBOX){
-    // iOS öffnet Kamera/Galerie nach einer Netzwerk-Prüfung nicht mehr automatisch, darum danach nochmals tippen
-    if(!v){ $('#codeFehler').textContent='Bitte PIN eingeben.'; i.focus(); return; }
-    const btn=form.querySelector('button[type=submit]'); btn.disabled=true;
-    try{
-      const r=await api('/api/monteur-pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:v})});
-      const d=await r.json(); ROLLE=d.rolle; rolleMerken();
-      const dl=$('#dlg'); if(dl.open) dl.close();
-      toast(form.dataset.ziel==='montiert'?'Freigeschaltet. Jetzt «Als montiert melden» tippen.':'Freigeschaltet. Jetzt nochmals auf den Foto-Knopf tippen.');
-      planRender();
-    }catch(err){
-      $('#codeFehler').textContent=err.code==='pin-falsch'?'PIN falsch, bitte nochmals.':(err.message||'Prüfung fehlgeschlagen');
-      i.value=''; i.focus(); btn.disabled=false;
-    }
-    return;
+  if(!v){ $('#codeFehler').textContent='Bitte PIN eingeben.'; i.focus(); return; }
+  const btn=form.querySelector('button[type=submit]'); btn.disabled=true;
+  try{
+    const d=await (await scanApi('/pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:v})})).json();
+    LS.set('monteurSitzung',d.sitzung);
+    if(SCAN.daten) SCAN.daten.monteur=true;
+    const dl=$('#dlg'); if(dl.open) dl.close();
+    toast(form.dataset.ziel==='montiert'?'Freigeschaltet. Jetzt «Als montiert melden» tippen.':'Freigeschaltet. Jetzt nochmals auf den Foto-Knopf tippen.');
+    planRender();
+  }catch(err){
+    $('#codeFehler').textContent=err.code==='pin-falsch'?'PIN falsch, bitte nochmals.':err.code==='zu-viele-versuche'?'Zu viele Versuche. Bitte 15 Minuten warten.':(err.message||'Prüfung fehlgeschlagen');
+    i.value=''; i.focus(); btn.disabled=false;
   }
-  if(v!==fotoCodeSoll()){ $('#codeFehler').textContent='Code falsch, bitte nochmals.'; i.value=''; i.focus(); return; }
-  LS.set('fotoCode',v);
-  const inp=$(`[data-foto="${form.dataset.ziel}"]`); const d=$('#dlg'); if(d.open) d.close();
-  if(inp) inp.click();
 }
 async function fotosHinzufuegen(files){
   const e=elem(S.scanElement); if(!e||!files.length) return;
-  if(!fotoFrei()){ toast(DROPBOX?'Bitte zuerst mit dem Monteur-PIN freischalten':'Bitte zuerst den Code eingeben'); return; }
+  if(!fotoFrei()){ toast('Bitte zuerst mit dem Monteur-PIN freischalten'); return; }
   const inp=$('#monteurName'); const von=(inp&&inp.value||'').trim();
+  if(scanModus()){ await scanFotos(e,files,von); return; }
   toast('Fotos werden hochgeladen');
   const neu=[]; const laeufe=[];
   for(const f of files){
@@ -2024,6 +2021,10 @@ async function fotoLoeschen(fid){
   const e=elem(S.scanElement); if(!e||!fotoFrei()) return;
   const f=(e.fotos||[]).find(x=>x.id===fid); if(!f) return;
   if(!await bestaetigen('Foto entfernen?','Das Foto wird für alle Benutzer von diesem Element entfernt.','Entfernen')) return;
+  if(scanModus()){
+    try{ await scanApi('/foto'+scanK()+'&id='+encodeURIComponent(fid),{method:'DELETE'}); }catch(err){ toast('Foto nicht entfernt: '+err.message); return; }
+    e.fotos=e.fotos.filter(x=>x.id!==fid); DB.del(fid).catch(()=>{}); renderScanElement(e); return;
+  }
   e.fotos=e.fotos.filter(x=>x.id!==fid);
   fire(updateDoc(ref('elemente',e.id),{fotos:arrayRemove(f)}));
   delFile(fid); renderScanElement(e);
@@ -2185,54 +2186,119 @@ async function pdZeigen(eingabe){
   inp.focus();
 }
 
-/* ---------- Monteur-Ansicht ohne volle Daten ----------
-   Lädt nur das gescannte Element, sein Objekt und seine zwei Pläne (schnell auf 4G, keine fremden Kundendaten). */
-const SCAN={key:null,id:null,status:'leer'}; const lisScan=[]; const scanAbo=new Set();
-const ID_OK=/^[A-Za-z0-9_.-]{1,150}$/;
-function scanStopp(){ lisScan.splice(0).forEach(u=>{ try{ u(); }catch(e){} }); scanAbo.clear(); Object.assign(SCAN,{key:null,id:null,status:'leer'}); delete meta.scanE; }
-function scanZiel(m,q,b){
-  if(b){ const nr=decodeURIComponent(b[1]).trim(); return {key:'b:'+nr,ids:['ba_'+nr,'ba_'+schluessel(nr)],ba:nr}; }
-  if(m){ let x=null; try{ x=dec(m[1]); }catch(e){} return {key:'e:'+m[1],ids:x&&x.i?[String(x.i)]:[],kaputt:!x}; }
-  const a=(q.get('a')||'').trim(), pp=(q.get('p')||'').trim(); const ok=!!(schluessel(a)&&schluessel(pp));
-  return {key:'a:'+a+'|'+pp,ids:ok?[elementIdFuer(a,pp)]:[],kaputt:!ok};
+/* ---------- Baustelle: Scan über den Worker mit dem Etiketten-Schlüssel ----------
+   Kein Datenbankzugriff vom Handy und keine Anmeldung. Der QR-Code enthält einen zufälligen Schlüssel (#k=…);
+   der Worker liefert genau dieses Element mit Objekt, zwei Plänen und Fotos. Nach Ablauf der Aufbewahrung
+   (28 Tage) sperrt der Worker den Schlüssel. Schreiben (montiert, Fotos) nur mit Monteur-Sitzung nach PIN. */
+const SCAN={key:null,id:null,status:'leer',k:null,daten:null,fehler:null};
+function scanStopp(){ Object.assign(SCAN,{key:null,id:null,status:'leer',k:null,daten:null,fehler:null}); }
+const monteurSitzung=()=>String(LS.get('monteurSitzung','')||'');
+const scanModus=()=>!!SCAN.k&&!istBuero();
+const scanK=()=>'?k='+encodeURIComponent(SCAN.k||'');
+async function scanApi(pfad,{method='GET',body,headers={}}={}){
+  let r;
+  try{ r=await fetch(WORKER_URL+'/api/scan'+pfad,{method,body,headers:{...headers,...(monteurSitzung()?{'X-Monteur':monteurSitzung()}:{})}}); }
+  catch(e){ throw new ApiFehler(0,'netz','Keine Verbindung'); }
+  if(!r.ok) throw await apiFehlerAus(r);
+  return r;
 }
-async function starteScan(z){
-  if(SCAN.key===z.key) return;
-  scanStopp(); SCAN.key=z.key; SCAN.status='laedt'; starteSettingsEinzeln();
-  if(z.kaputt){ SCAN.status='fehlt'; route(); return; }
-  let id=null, netz=false;
-  for(const c of [...new Set(z.ids)]){
-    if(!ID_OK.test(c)) continue;
-    try{ const d=await getDoc(ref('elemente',c)); if(d.exists()){ id=c; break; } }catch(e){ console.warn('Element nicht ladbar',c,e); netz=true; }
-  }
-  if(!id&&z.ba&&/^[A-Za-z0-9_.-]{1,100}$/.test(z.ba)){
-    try{ const d=await getDoc(ref('barcodes',z.ba)); if(d.exists()&&ID_OK.test(d.data().elementId||'')) id=d.data().elementId; }catch(e){ console.warn('Barcode nicht ladbar',e); }
-  }
-  if(SCAN.key!==z.key) return;
-  if(!id){ SCAN.status=netz?'fehler':'fehlt'; route(); return; }
-  SCAN.id=id;
-  lisScan.push(onSnapshot(ref('elemente',id),{includeMetadataChanges:true},snap=>{
-    if(SCAN.key!==z.key) return;
-    fehlerZurueck(); meta.scanE=snap.metadata; syncStatus();
-    if(!snap.exists()){ if(!snap.metadata.fromCache){ S.elemente=S.elemente.filter(x=>x.id!==id); SCAN.status='fehlt'; route(); } return; }
-    const e={...snap.data(),id}; upsert(S.elemente,e);
-    scanAbhaengige(e,z.key);
-    if(SCAN.status!=='bereit'){ SCAN.status='bereit'; route(); } else planRender();
-  },err=>{ if(SCAN.key!==z.key) return; SCAN.status='fehler'; syncFehler(err); route(); }));
+function starteScan(k){
+  if(SCAN.k===k&&SCAN.status!=='leer') return;
+  scanStopp(); SCAN.k=k; SCAN.key='k:'+k; SCAN.status='laedt';
+  scanNeuLaden();
 }
-function scanAbhaengige(e,key){
-  for(const [coll,id] of [['objekte',e.objektId],['plaene',e.montagePlanId],['plaene',e.detailPlanId]]){
-    if(!id||!ID_OK.test(id)) continue; const k=coll+'/'+id; if(scanAbo.has(k)) continue; scanAbo.add(k);
-    lisScan.push(onSnapshot(ref(coll,id),snap=>{
-      if(SCAN.key!==key) return;
-      if(snap.exists()) upsert(S[coll],{...snap.data(),id}); else S[coll]=S[coll].filter(x=>x.id!==id);
-      planRender();
-    },err=>console.warn('Nicht ladbar',k,err)));
+async function scanNeuLaden(){
+  const k=SCAN.k;
+  try{
+    const d=await (await scanApi(scanK())).json();
+    if(SCAN.k!==k) return;
+    scanUebernehmen(d); SCAN.status='bereit';
+  }catch(err){
+    if(SCAN.k!==k) return;
+    console.warn('Scan',err);
+    SCAN.status=err.status===410?'abgelaufen':err.status===404?'fehlt':'fehler'; SCAN.fehler=err;
   }
+  route();
+}
+function scanUebernehmen(d){
+  SCAN.daten=d; SCAN.id=d.element.id;
+  if(d.logo) S.settings.logo=d.logo;
+  const ids={};
+  for(const art of ['montage','detail']){
+    const p=d.plaene&&d.plaene[art]; if(!p) continue;
+    const id='scanplan:'+art;
+    // Datei-ID enthält Schlüssel und Grösse, damit der Handy-Cache nie einen falschen oder alten Plan zeigt
+    upsert(S.plaene,{id,art,name:p.name,size:p.size,url:p.url||'',fileId:p.datei?`scan:${art}:${SCAN.k}:${p.size||0}`:'',fertig:!p.datei||p.bereit});
+    ids[art]=id;
+  }
+  const oid=d.element.objektId||'scanobjekt';
+  upsert(S.objekte,{...d.objekt,id:oid});
+  upsert(S.elemente,{...elemVorgabe(),...d.element,objektId:oid,montagePlanId:ids.montage||'',detailPlanId:ids.detail||''});
+  S.plaene.filter(p=>p.id.startsWith('scanplan:')&&!Object.values(ids).includes(p.id)).forEach(p=>{ S.plaene=S.plaene.filter(x=>x!==p); });
+}
+function scanMeldung(status){
+  S.scanElement=null;
+  const t={
+    abgelaufen:['QR-Code abgelaufen','Dieser Auftrag ist nicht mehr online. Aufträge sind 4 Wochen ab Eröffnung abrufbar. Bitte im Büro nachfragen.'],
+    fehlt:['Etikette unbekannt','Diese Etikette ist nicht (mehr) im System. Bitte im Büro nachfragen.'],
+    fehler:['Keine Verbindung','Die Daten konnten nicht geladen werden. Bitte Internetverbindung prüfen.']
+  }[status]||['Fehler','Bitte erneut scannen.'];
+  $('#scan').innerHTML=`<div class="sc">${scanKopf()}<div class="sc-fehler"><h1>${t[0]}</h1><p>${t[1]}</p>${status==='fehler'?'<p><a href="" class="btn primary">Erneut versuchen</a></p>':''}</div></div>`;
+  syncStatus();
+}
+function scanVeraltet(){
+  S.scanElement=null;
+  $('#scan').innerHTML=`<div class="sc">${scanKopf()}<div class="sc-fehler"><h1>Ältere Etikette</h1><p>Diese Etikette stammt aus der Zeit vor der Sicherheitsumstellung. Pläne und Fotos sind nur mit einer neu gedruckten Etikette abrufbar. Bitte im Büro neu drucken lassen.</p><p class="leer">Büro: Mit der Anmeldung lässt sich diese Etikette weiterhin öffnen.</p><p><a href="./" class="btn">Büro-Anmeldung</a></p></div></div>`;
+  syncStatus();
+}
+async function scanMontage(body){
+  const e=elem(SCAN.id); if(!e) return;
+  try{
+    const d=await (await scanApi('/montiert'+scanK(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    Object.assign(e,{status:d.status,montiert:d.montiert});
+    toast(body.zurueck?'Meldung zurückgenommen':'Als montiert gemeldet');
+  }catch(err){
+    if(err.code==='monteur-pin-noetig'){ LS.set('monteurSitzung',''); if(SCAN.daten) SCAN.daten.monteur=false; codeAbfragen('montiert'); return; }
+    toast('Nicht gespeichert: '+err.message); return;
+  }
+  renderScanElement(e);
+}
+function scanFotoHochladen(blob,typ,von){
+  return new Promise((res,rej)=>{
+    const x=new XMLHttpRequest(); x.open('POST',WORKER_URL+'/api/scan/foto'+scanK());
+    x.setRequestHeader('Content-Type',typ); x.setRequestHeader('X-Monteur',monteurSitzung()); x.setRequestHeader('X-Von',encodeURIComponent(von||''));
+    x.timeout=5*60*1000;
+    x.onload=()=>{ let d={}; try{ d=JSON.parse(x.responseText||'{}'); }catch(e){} if(x.status>=200&&x.status<300) res(d); else rej(new ApiFehler(x.status,d.fehler,d.text)); };
+    x.onerror=()=>rej(new ApiFehler(0,'netz','Keine Verbindung'));
+    x.ontimeout=()=>rej(new ApiFehler(0,'netz','Zeitüberschreitung'));
+    x.send(blob);
+  });
+}
+async function scanFotos(e,files,von){
+  const bilder=files.filter(f=>!f.type||f.type.startsWith('image/'));
+  if(!bilder.length){ toast('Keine Bilddatei gefunden'); return; }
+  offeneUploads++; let ok=0;
+  try{
+    for(let i=0;i<bilder.length;i++){
+      toast(bilder.length>1?`Foto ${i+1} von ${bilder.length} wird hochgeladen`:'Foto wird hochgeladen');
+      const b=await komprimieren(bilder[i]);
+      let typ=(b.type||'image/jpeg').toLowerCase(); if(typ==='image/jpg') typ='image/jpeg';
+      if(b.size>10*1048576){ toast(`${bilder[i].name} ist zu gross`); continue; }
+      try{
+        const d=await scanFotoHochladen(b,typ,von);
+        DB.put({id:d.foto.id,name:d.foto.id.split('/').pop(),type:typ,data:await b.arrayBuffer()}).catch(()=>{});
+        e.fotos=[...(e.fotos||[]),d.foto]; ok++; renderScanElement(e);
+      }catch(err){
+        if(err.code==='monteur-pin-noetig'){ LS.set('monteurSitzung',''); if(SCAN.daten) SCAN.daten.monteur=false; toast('Bitte erneut mit dem Monteur-PIN freischalten'); renderScanElement(e); return; }
+        toast('Foto nicht gespeichert: '+err.message);
+      }
+    }
+  }finally{ offeneUploads--; }
+  if(ok) toast(`${ok} Foto${ok>1?'s':''} gespeichert`);
 }
 
 /* ---------- Anmeldung und Rollen ---------- */
-let AUTH_BEREIT=false, anonLaeuft=false;
+let AUTH_BEREIT=false;
 function rolleMerken(){ if(USER&&ROLLE) LS.set('rolle',{uid:USER.uid,rolle:ROLLE}); }
 async function rolleLaden(user){
   // Gemerkt wird nur, was Server oder PIN bestätigt haben. Ein anonymes Gerät gilt nie aus dem Speicher als «Büro».
@@ -2241,20 +2307,16 @@ async function rolleLaden(user){
   try{
     const d=await getDoc(ref('rollen',user.uid));
     const r=d.exists()?d.data().rolle:null;
-    ROLLE=['buero','monteur'].includes(r)?r:'extern'; REGELN_ALT=false;
+    ROLLE=r==='buero'?'buero':'extern'; REGELN_ALT=false;
   }catch(err){
     merken=false;
     if(err.code==='permission-denied'){
       // Alte, offene Firestore-Regeln: Verhalten wie bisher. Mit Worker zählt für Fotos der PIN.
       REGELN_ALT=true;
-      ROLLE=!user.isAnonymous?'buero':DROPBOX?(gemerkt==='monteur'?'monteur':'extern'):'buero';
+      ROLLE=!user.isAnonymous?'buero':'extern';
     }else{ console.warn('Rolle nicht ladbar',err); ROLLE=gemerkt||(user.isAnonymous?'extern':'buero'); }
   }
   if(merken) rolleMerken();
-}
-function anonymAnmelden(){
-  if(anonLaeuft||USER||!AUTH) return; anonLaeuft=true;
-  signInAnonymously(AUTH).catch(err=>{ authFehler=err.code||err.message; console.warn('Anonyme Anmeldung fehlgeschlagen:',authFehler); route(); }).finally(()=>{ anonLaeuft=false; });
 }
 function renderLogin(grund){
   document.body.classList.add('modus-login');
@@ -2492,48 +2554,54 @@ document.addEventListener('change',async ev=>{
 });
 
 function route(){
+  const kk=/^#k=([A-Za-z0-9]{16,64})/.exec(location.hash);
   const m=/^#e=([A-Za-z0-9_-]+)/.exec(location.hash);
   const q=/^#a=/.test(location.hash)?new URLSearchParams(location.hash.slice(1)):null;
   const b=/^#b=([^&]+)/.exec(location.hash);
   const prod=location.hash==='#produktion';
-  const scan=!prod&&!!(m||q||b);
+  const scan=!prod&&!!(kk||m||q||b);
   document.body.classList.toggle('modus-scan',scan);
   document.body.classList.toggle('modus-prod',prod);
   const laedt=()=>{
-    if(scan) $('#scan').innerHTML=`<div class="sc">${scanKopf()}<div class="sc-fehler">${authFehler?`<h1>Keine Verbindung</h1><p>Die Anmeldung ist fehlgeschlagen. Bitte Internetverbindung prüfen.</p><p><a href="" class="btn primary">Erneut versuchen</a></p>`:'<p>Daten werden geladen</p>'}</div></div>`;
+    if(scan) $('#scan').innerHTML=`<div class="sc">${scanKopf()}<div class="sc-fehler"><p>Daten werden geladen</p></div></div>`;
     if(prod) $('#produktion').innerHTML=`<div class="pd-leer">Daten werden geladen</div>`;
     syncStatus();
   };
-  if(!AUTH_BEREIT||!USER||ROLLE===null){ document.body.classList.remove('modus-login'); laedt(); return; }
+  if(!AUTH_BEREIT||(USER&&ROLLE===null)){ document.body.classList.remove('modus-login'); laedt(); return; }
   if(scan){
     document.body.classList.remove('modus-login');
-    if(volleDaten()){
-      // Büro (oder alte Regeln): wie bisher mit allen Daten
-      scanStopp(); starteListener();
+    if(istBuero()){
+      // Büro: wie bisher mit allen Daten
+      scanStopp(); starteListener(); starteZugaenge();
       if(!S.gestartet){ laedt(); return; }
-      window.scrollTo(0,0); b?renderScanBA(decodeURIComponent(b[1])):m?renderScan(m[1]):renderScanEnventa(q);
+      window.scrollTo(0,0);
+      if(kk){ const e=S.elemente.find(x=>x.zugang===kk[1]); if(e){ S.scanElement=e.id; renderScanElement(e); } else scanNichtGefunden('Diese Etikette'); }
+      else b?renderScanBA(decodeURIComponent(b[1])):m?renderScan(m[1]):renderScanEnventa(q);
       syncStatus(); return;
     }
-    // Monteur / Extern: nur dieses Element
-    const z=scanZiel(m,q,b); starteScan(z);
-    if(SCAN.status==='laedt'){ laedt(); return; }
-    if(z.kaputt){ scanFehler(); return; }
-    const e=SCAN.status==='bereit'&&elem(SCAN.id);
-    if(e){ if(S.scanElement!==e.id) window.scrollTo(0,0); S.scanElement=e.id; renderScanElement(e); syncStatus(); return; }
+    // Baustelle ohne Anmeldung: nur mit dem Schlüssel der Etikette, über den Worker
+    if(kk){
+      starteScan(kk[1]);
+      if(SCAN.status==='laedt'){ laedt(); return; }
+      const e=SCAN.status==='bereit'&&elem(SCAN.id);
+      if(e){ if(S.scanElement!==e.id) window.scrollTo(0,0); S.scanElement=e.id; renderScanElement(e); syncStatus(); return; }
+      scanMeldung(SCAN.status); return;
+    }
     if(m){ renderScan(m[1]); return; }
-    scanNichtGefunden(b?`Betriebsauftrag ${decodeURIComponent(b[1])}`:'Dieses Element'); return;
+    scanVeraltet(); return;
   }
-  // Büro und Produktion: nur mit Büro-Berechtigung
-  if(!istBuero()){ renderLogin(USER.isAnonymous?'':'rolle'); return; }
+  // Büro und Produktion: nur mit Büro-Anmeldung
+  if(!istBuero()){ renderLogin(USER&&!USER.isAnonymous?'rolle':''); return; }
   document.body.classList.remove('modus-login');
-  scanStopp(); starteListener(); starteBarcodes(); regelnHinweis(); kopfBenutzer();
+  scanStopp(); starteListener(); starteZugaenge(); regelnHinweis(); kopfBenutzer();
   if(!S.gestartet){ laedt(); return; }
   if(prod) renderProduktion();
   else renderAll();
   syncStatus();
 }
-window.addEventListener('hashchange',route);
-window.addEventListener('popstate',route);
+// Neuer QR-Code oder zurück: Scan-Daten immer frisch vom Worker holen (Ablauf, Änderungen im Büro)
+window.addEventListener('hashchange',()=>{ scanStopp(); route(); });
+window.addEventListener('popstate',()=>{ scanStopp(); route(); });
 window.addEventListener('resize',debounce(fitSkala,120));
 
 /* ---------- Start ---------- */
@@ -2546,7 +2614,9 @@ async function init(){
     const uid=user?user.uid:null;
     if(letzteUid!==undefined&&uid!==letzteUid) alleListenerStopp();
     letzteUid=uid; USER=user; angemeldet=!!user; AUTH_BEREIT=true; ROLLE=null;
-    if(!user){ anonymAnmelden(); route(); return; }
+    if(!user){ route(); return; }
+    // Alte anonyme Sitzung (vor der Umstellung) beenden: Baustelle braucht keine Anmeldung mehr
+    if(user.isAnonymous){ signOut(AUTH).catch(()=>{}); return; }
     authFehler=null; fehlerZurueck();
     await rolleLaden(user); if(USER!==user) return;
     route();

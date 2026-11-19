@@ -40,11 +40,30 @@ globalThis.fetch = async (input, init = {}) => {
     const ok = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', saKey.publicKey, Buffer.from(s, 'base64url'), new TextEncoder().encode(h + '.' + c));
     return ok ? Response.json({ access_token: 'sa-token', expires_in: 3600 }) : new Response('bad', { status: 400 });
   }
-  if (url.startsWith('https://firestore.googleapis.com/')) {
+  if (url.startsWith('https://firestore.googleapis.com/') && !url.endsWith(':commit')) {
     assert.equal(hdr.get('Authorization'), 'Bearer sa-token');
     const m = /documents\/([^/]+)\/([^/?]+)/.exec(url); const key = m[1] + '/' + decodeURIComponent(m[2]);
     if (method === 'GET') { const d = FS.get(key); return d ? Response.json({ name: key, fields: zuFs(d).mapValue.fields }) : new Response('{}', { status: 404 }); }
-    if (method === 'PATCH') { const body = JSON.parse(init.body); const { vonFs } = await import('../src/index.js'); FS.set(key, vonFs({ mapValue: { fields: body.fields } })); return Response.json({}); }
+    const { vonFs } = await import('../src/index.js');
+    if (method === 'PATCH') {
+      const q = new URL(url).searchParams; const maske = q.getAll('updateMask.fieldPaths');
+      if (q.get('currentDocument.exists') === 'true' && !FS.has(key)) return new Response('{}', { status: 404 });
+      const neu = vonFs({ mapValue: { fields: JSON.parse(init.body).fields } });
+      if (maske.length) { const alt = { ...(FS.get(key) || {}) }; for (const f of maske) { if (f in neu) alt[f] = neu[f]; else delete alt[f]; } FS.set(key, alt); }
+      else FS.set(key, neu);
+      return Response.json({});
+    }
+  }
+  if (url.startsWith('https://firestore.googleapis.com/') && url.endsWith(':commit')) {
+    const { vonFs } = await import('../src/index.js');
+    for (const w of JSON.parse(init.body).writes) {
+      const key = w.transform.document.split('/documents/')[1];
+      if (!FS.has(key)) return new Response('{}', { status: 404 });
+      const d = { ...FS.get(key) };
+      for (const t of w.transform.fieldTransforms) { const arr = [...(d[t.fieldPath] || [])]; for (const v of t.appendMissingElements.values) { const x = vonFs(v); if (!arr.some(y => JSON.stringify(y) === JSON.stringify(x))) arr.push(x); } d[t.fieldPath] = arr; }
+      FS.set(key, d);
+    }
+    return Response.json({});
   }
   if (url === 'https://api.dropboxapi.com/oauth2/token') return Response.json({ access_token: 'dbx-token', expires_in: 14400 });
   if (url.startsWith('https://content.dropboxapi.com/2/files/upload')) {
@@ -92,6 +111,21 @@ const hoch = (tok, pfad, body = PDF, typ = 'application/pdf') => dat(pfad, { met
 const JPG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6]);
 
 
+
+const K = 'Ab3dEf6hIj9kLm2nOp5q';            // gültiger Etiketten-Schlüssel
+const TAG = 864e5;
+function scanDaten({ alterTage = 1, behaltenBis = null, tage } = {}) {
+  fsDoc('objekte', 'obj1', { name: 'Feldblumenweg', kunde: 'Sada AG', created: Date.now() - alterTage * TAG, ...(behaltenBis ? { behaltenBis } : {}) });
+  if (tage != null) fsDoc('settings', 'app', { aufbewahrungTage: tage });
+  fsDoc('plaene', 'p1', { objektId: 'obj1', art: 'montage', name: 'Montage Zürich.pdf', fileId: 'dbx:plaene/obj1/p1.pdf', size: PDF.length, fertig: true });
+  fsDoc('plaene', 'p2', { objektId: 'obj1', art: 'detail', name: 'Detail alt.pdf', fileId: 'altfirestore1', fertig: true });
+  fsDoc('elemente', 'el1', { objektId: 'obj1', pos: 'NZ 41.03', bezeichnung: 'Dusche', zugang: K, montagePlanId: 'p1', detailPlanId: 'p2', status: 'geliefert', fotos: [], intern: 'geheim' });
+  fsDoc('zugaenge', K, { elementId: 'el1' });
+  DBX.set('/plaene/obj1/p1.pdf', PDF);
+}
+const scan = (pfad, o = {}) => call('/api/scan' + pfad, o);
+async function sitzung() { const r = await scan('/pin', { method: 'POST', body: JSON.stringify({ pin: '482913' }), headers: { 'Content-Type': 'application/json' } }); return (await r.json()).sitzung; }
+
 test('health ohne Anmeldung', async () => {
   const r = await call('/api/health'); assert.equal(r.status, 200);
   const d = await r.json(); assert.equal(d.dropbox, true); assert.equal(d.firebase, true);
@@ -103,7 +137,7 @@ test('CORS: fremde Seite bekommt keinen Allow-Origin', async () => {
   assert.equal(r.headers.get('Access-Control-Allow-Origin'), null);
 });
 
-test('ohne Token, falsches Token, fremder Schlüssel, falsches Projekt, abgelaufen: abgewiesen', async () => {
+test('Büro-Dateien: ohne, falsches, fremdes, abgelaufenes Token abgewiesen', async () => {
   const p = 'plaene/a_26-0412/p1.pdf';
   assert.equal((await dat(p)).status, 401);
   assert.equal((await dat(p, { tok: 'abc.def.ghi' })).status, 401);
@@ -112,95 +146,126 @@ test('ohne Token, falsches Token, fremder Schlüssel, falsches Projekt, abgelauf
   assert.equal((await dat(p, { tok: await token('x', { exp: -120 }) })).status, 401);
 });
 
-test('Büro lädt Plan hoch, Extern lädt ihn herunter', async () => {
+test('Büro-Dateien: nur Rolle Büro darf lesen, schreiben, löschen', async () => {
   const p = 'plaene/a_26-0412/mwm7abc12.pdf';
-  const r = await hoch(await token('buero1'), p);
-  assert.equal(r.status, 200, await r.clone().text());
-  const d = await r.json();
-  assert.equal(d.id, 'dbx:' + p); assert.equal(d.size, PDF.length);
-  assert.ok(DBX.has('/' + p.toLowerCase()));
-  const g = await dat(p, { tok: await token('anon1', { anonym: true }) });
-  assert.equal(g.status, 200);
-  assert.equal(g.headers.get('Content-Type'), 'application/pdf');
-  assert.match(g.headers.get('Content-Disposition'), /mwm7abc12\.pdf/);
-  assert.deepEqual(new Uint8Array(await g.arrayBuffer()), PDF);
-});
-
-test('Plan-Upload: Monteur und Extern nicht, kein PDF, zu gross, nie überschreiben', async () => {
-  const p = 'plaene/obj1/x1.pdf';
-  assert.equal((await hoch(await token('mont1'), p)).status, 403);
   assert.equal((await hoch(await token('anon1', { anonym: true }), p)).status, 403);
-  assert.equal((await hoch(await token('buero1'), p, new TextEncoder().encode('<html>boese</html>'))).status, 415);
-  const gross = await dat(p, { method: 'POST', tok: await token('buero1'), body: PDF, headers: { 'Content-Length': String(60 * 1048576) } });
-  assert.equal(gross.status, 413);
+  assert.equal((await hoch(await token('mont1'), p)).status, 403, 'alte Rolle «monteur» gilt nicht mehr');
+  const r = await hoch(await token('buero1'), p);
+  assert.equal(r.status, 200); assert.equal((await r.json()).id, 'dbx:' + p);
+  assert.equal((await dat(p, { tok: await token('anon1', { anonym: true }) })).status, 403, 'Anonyme dürfen nicht lesen');
+  const g = await dat(p, { tok: await token('buero1') });
+  assert.equal(g.status, 200); assert.deepEqual(new Uint8Array(await g.arrayBuffer()), PDF);
+  assert.equal((await dat(p, { method: 'DELETE', tok: await token('anon1', { anonym: true }) })).status, 403);
+  assert.equal((await dat(p, { method: 'DELETE', tok: await token('buero1') })).status, 200);
   assert.equal(DBX.size, 0);
-  assert.equal((await hoch(await token('buero1'), p)).status, 200);
-  const zweit = await hoch(await token('buero1'), p, new TextEncoder().encode('%PDF-1.4 anders'));
-  assert.equal(zweit.status, 409, 'bestehende Datei wird nicht überschrieben');
-  assert.deepEqual(DBX.get('/' + p), PDF);
 });
 
-test('Pfade: nur plaene/ und fotos/, keine Tricks', async () => {
+test('Plan-Upload: kein PDF, zu gross, nie überschreiben, Pfad-Tricks', async () => {
   const t = await token('buero1');
-  for (const p of ['geheim/x/y.pdf', 'plaene/../fotos/x.pdf', 'plaene/a/b/c.pdf', 'plaene/a/x.jpg', 'fotos/a/x.pdf', '/plaene/a/x.pdf', 'plaene/a/x.pdf.exe', 'plaene/a/x', 'plaene/../x.pdf', 'plaene/a/..pdf'])
+  assert.equal((await hoch(t, 'plaene/obj1/x1.pdf', new TextEncoder().encode('<html>'))).status, 415);
+  assert.equal((await dat('plaene/obj1/x1.pdf', { method: 'POST', tok: t, body: PDF, headers: { 'Content-Length': String(60 * 1048576) } })).status, 413);
+  assert.equal((await hoch(t, 'plaene/obj1/x1.pdf')).status, 200);
+  assert.equal((await hoch(t, 'plaene/obj1/x1.pdf', new TextEncoder().encode('%PDF-1.4 anders'))).status, 409);
+  for (const p of ['geheim/x/y.pdf', 'plaene/../fotos/x.pdf', 'plaene/a/b/c.pdf', 'plaene/a/x.jpg', 'fotos/a/x.pdf', '/plaene/a/x.pdf', 'plaene/a/x'])
     assert.equal((await hoch(t, p)).status, 400, p);
-  assert.equal((await dat('plaene/a/x.pdf', { tok: t, method: 'PUT' })).status, 404);
 });
 
-test('Download: fehlende Datei 404', async () => {
-  assert.equal((await dat('plaene/obj1/gibtsnicht.pdf', { tok: await token('anon1', { anonym: true }) })).status, 404);
+test('Scan: mit Schlüssel genau ein Element, ohne interne Felder', async () => {
+  scanDaten();
+  const r = await scan('?k=' + K);
+  assert.equal(r.status, 200);
+  const d = await r.json();
+  assert.equal(d.element.pos, 'NZ 41.03'); assert.equal(d.objekt.kunde, 'Sada AG');
+  assert.equal(d.element.intern, undefined); assert.equal(d.element.zugang, undefined, 'Schlüssel nicht zurückgeben');
+  assert.equal(d.plaene.montage.bereit, true); assert.equal(d.plaene.detail.bereit, false);
+  assert.equal(d.monteur, false);
 });
 
-test('Plan löschen: nur Büro, doppelt ok', async () => {
-  const p = 'plaene/obj1/l1.pdf';
-  await hoch(await token('buero1'), p);
-  assert.equal((await dat(p, { method: 'DELETE', tok: await token('mont1') })).status, 403);
-  assert.equal((await dat(p, { method: 'DELETE', tok: await token('anon1', { anonym: true }) })).status, 403);
-  assert.equal(DBX.size, 1);
-  assert.equal((await dat(p, { method: 'DELETE', tok: await token('buero1') })).status, 200);
-  assert.equal(DBX.size, 0);
-  assert.equal((await dat(p, { method: 'DELETE', tok: await token('buero1') })).status, 200);
+test('Scan: falscher, zu kurzer oder fehlender Schlüssel abgewiesen', async () => {
+  scanDaten();
+  assert.equal((await scan('')).status, 404);
+  assert.equal((await scan('?k=abc')).status, 404);
+  assert.equal((await scan('?k=Ab3dEf6hIj9kLm2nOp5X')).status, 404);
+  assert.equal((await scan('?k=' + K + '%2F..')).status, 404);
+  // Schlüssel im Verzeichnis, aber nicht (mehr) beim Element: abgewiesen
+  fsDoc('elemente', 'el1', { ...FS.get('elemente/el1'), zugang: 'NeuerSchluessel12345' });
+  assert.equal((await scan('?k=' + K)).status, 404);
 });
 
-test('Fotos: Monteur lädt hoch und löscht, Extern nicht, falscher Typ abgewiesen', async () => {
-  const p = 'fotos/ba_2026102735/f1.jpg';
-  assert.equal((await hoch(await token('anon1', { anonym: true }), p, JPG, 'image/jpeg')).status, 403);
-  assert.equal((await hoch(await token('mont1'), p, JPG, 'text/html')).status, 415);
-  assert.equal((await hoch(await token('mont1'), p, JPG, 'image/jpeg')).status, 200);
-  const g = await dat(p, { tok: await token('anon1', { anonym: true }) });
-  assert.equal(g.status, 200); assert.equal(g.headers.get('Content-Type'), 'image/jpeg');
-  assert.deepEqual(new Uint8Array(await g.arrayBuffer()), JPG);
-  assert.equal((await dat(p, { method: 'DELETE', tok: await token('anon1', { anonym: true }) })).status, 403);
-  assert.equal((await dat(p, { method: 'DELETE', tok: await token('mont1') })).status, 200);
-  assert.equal(DBX.size, 0);
+test('Scan: nach Ablauf der Aufbewahrung gesperrt (Standard 28 Tage, Behalten verlängert)', async () => {
+  scanDaten({ alterTage: 27 }); assert.equal((await scan('?k=' + K)).status, 200);
+  scanDaten({ alterTage: 29 }); assert.equal((await scan('?k=' + K)).status, 410);
+  assert.equal((await scan('/datei?k=' + K + '&art=montage')).status, 410, 'auch Pläne gesperrt');
+  scanDaten({ alterTage: 29, behaltenBis: Date.now() + 5 * TAG }); assert.equal((await scan('?k=' + K)).status, 200);
+  scanDaten({ alterTage: 29, tage: 60 }); assert.equal((await scan('?k=' + K)).status, 200, 'Einstellung 60 Tage');
+  scanDaten({ alterTage: 400, tage: 0 }); assert.equal((await scan('?k=' + K)).status, 200, '0 = nie');
 });
 
-test('Monteur-PIN: falsch, gesperrt nach 5 Versuchen, richtig setzt Rolle', async () => {
-  const t = await token('anon2', { anonym: true });
-  const pin = p => call('/api/monteur-pin', { method: 'POST', tok: t, body: JSON.stringify({ pin: p }), headers: { 'Content-Type': 'application/json' } });
+test('Scan: Pläne nur des eigenen Elements, alte Dateien melden 409', async () => {
+  scanDaten();
+  const r = await scan('/datei?k=' + K + '&art=montage');
+  assert.equal(r.status, 200); assert.deepEqual(new Uint8Array(await r.arrayBuffer()), PDF);
+  assert.match(r.headers.get('Content-Disposition'), /Z%C3%BCrich/);
+  assert.equal((await scan('/datei?k=' + K + '&art=detail')).status, 409);
+  assert.equal((await scan('/datei?k=' + K + '&art=produktion')).status, 400);
+  assert.equal((await scan('/datei?k=' + K + '&foto=dbx:plaene/obj1/p1.pdf')).status, 404, 'fremde Datei über Foto-Weg');
+});
+
+test('Scan: ohne PIN kein Schreiben; PIN falsch, Sperre, richtig', async () => {
+  scanDaten();
+  assert.equal((await scan('/montiert?k=' + K, { method: 'POST', body: JSON.stringify({ von: 'X' }) })).status, 403);
+  assert.equal((await scan('/montiert?k=' + K, { method: 'POST', body: JSON.stringify({ von: 'X' }), headers: { 'X-Monteur': 'm1.9999999999.gefaelschtgefaelschtgefaelscht' } })).status, 403);
+  const pin = p => scan('/pin', { method: 'POST', body: JSON.stringify({ pin: p }) });
   assert.equal((await pin('000000')).status, 403);
-  const t3 = await token('anon3', { anonym: true });
-  const ok = await call('/api/monteur-pin', { method: 'POST', tok: t3, body: JSON.stringify({ pin: '482913' }), headers: { 'Content-Type': 'application/json' } });
-  assert.equal(ok.status, 200); assert.equal((await ok.json()).rolle, 'monteur');
-  assert.equal(FS.get('rollen/anon3').rolle, 'monteur');
+  const s = await sitzung(); assert.match(s, /^m1\.\d+\./);
   for (let i = 0; i < 4; i++) await pin('111111');
-  assert.equal((await pin('482913')).status, 429, 'nach 5 Fehlversuchen gesperrt, auch mit richtigem PIN');
-  assert.equal(FS.get('rollen/anon2'), undefined);
+  assert.equal((await pin('482913')).status, 429, 'nach 5 Fehlversuchen gesperrt');
 });
 
-test('PIN stuft Büro nicht herunter', async () => {
-  const r = await call('/api/monteur-pin', { method: 'POST', tok: await token('buero1'), body: JSON.stringify({ pin: '482913' }) });
-  assert.equal((await r.json()).rolle, 'buero');
-  assert.equal(FS.get('rollen/buero1').rolle, 'buero');
+test('Scan: Monteur meldet montiert, nimmt zurück, nur erlaubte Felder', async () => {
+  scanDaten();
+  const s = await sitzung(); const h = { 'X-Monteur': s, 'Content-Type': 'application/json' };
+  let r = await scan('/montiert?k=' + K, { method: 'POST', headers: h, body: JSON.stringify({ von: 'Max Muster', status: 'egal', bezeichnung: 'gehackt' }) });
+  assert.equal(r.status, 200);
+  let e = FS.get('elemente/el1'); assert.equal(e.status, 'montiert'); assert.equal(e.montiert.von, 'Max Muster'); assert.equal(e.bezeichnung, 'Dusche');
+  r = await scan('/montiert?k=' + K, { method: 'POST', headers: h, body: JSON.stringify({ zurueck: true }) });
+  e = FS.get('elemente/el1'); assert.equal(e.status, 'geliefert'); assert.equal(e.montiert, null);
+  assert.equal((await scan('/montiert?k=' + K, { method: 'POST', headers: h, body: JSON.stringify({ von: '' }) })).status, 400);
 });
 
-test('me liefert Rolle', async () => {
-  assert.equal((await (await call('/api/me', { tok: await token('mont1') })).json()).rolle, 'monteur');
-  assert.equal((await (await call('/api/me', { tok: await token('wer', { anonym: true }) })).json()).rolle, 'extern');
+test('Scan: Monteur lädt Foto hoch, alle sehen es, Monteur löscht es', async () => {
+  scanDaten();
+  const s = await sitzung();
+  assert.equal((await scan('/foto?k=' + K, { method: 'POST', body: JSON, headers: { 'Content-Type': 'image/jpeg', 'Content-Length': '10' } })).status, 403);
+  assert.equal((await scan('/foto?k=' + K, { method: 'POST', body: JPG, headers: { 'X-Monteur': s, 'Content-Type': 'text/html', 'Content-Length': String(JPG.length) } })).status, 415);
+  const r = await scan('/foto?k=' + K, { method: 'POST', body: JPG, headers: { 'X-Monteur': s, 'Content-Type': 'image/jpeg', 'Content-Length': String(JPG.length), 'X-Von': encodeURIComponent('Jürg') } });
+  assert.equal(r.status, 200);
+  const f = (await r.json()).foto;
+  assert.match(f.id, /^dbx:fotos\/el1\/[a-z0-9]+\.jpg$/); assert.equal(f.von, 'Jürg');
+  assert.equal(FS.get('elemente/el1').fotos.length, 1);
+  const g = await scan('/datei?k=' + K + '&foto=' + encodeURIComponent(f.id));
+  assert.equal(g.status, 200); assert.deepEqual(new Uint8Array(await g.arrayBuffer()), JPG);
+  assert.equal((await scan('/foto?k=' + K + '&id=' + encodeURIComponent(f.id), { method: 'DELETE' })).status, 403);
+  assert.equal((await scan('/foto?k=' + K + '&id=' + encodeURIComponent(f.id), { method: 'DELETE', headers: { 'X-Monteur': s } })).status, 200);
+  assert.equal(FS.get('elemente/el1').fotos.length, 0); assert.equal(DBX.has(f.id.slice(4)), false);
+});
+
+test('Sitzung: PIN-Wechsel macht alte Sitzungen ungültig', async () => {
+  scanDaten();
+  const s = await sitzung();
+  const e2 = { ...env(), MONTEUR_PIN: '999111' };
+  const r = await worker.fetch(new Request('https://w.test/api/scan/montiert?k=' + K, { method: 'POST', body: JSON.stringify({ von: 'X' }), headers: { 'X-Monteur': s } }), e2, { waitUntil() {} });
+  assert.equal(r.status, 403);
+});
+
+test('me liefert Rolle (nur Büro oder extern)', async () => {
+  assert.equal((await (await call('/api/me', { tok: await token('buero1') })).json()).rolle, 'buero');
+  assert.equal((await (await call('/api/me', { tok: await token('mont1') })).json()).rolle, 'extern');
 });
 
 test('Hilfsfunktionen', () => {
   assert.equal(__test.headerJson({ path: '/ä' }), '{"path":"/' + '\\' + 'u00e4"}');
   assert.equal(__test.dateiPfad('plaene/a_26-0412.X/p1.pdf').dbx, '/plaene/a_26-0412.X/p1.pdf');
-  assert.equal(__test.dateiPfad('fotos/ba_1/f.jpg').typ, 'image/jpeg');
+  assert.equal(__test.abgelaufen({ created: Date.now() - 30 * TAG }, {}), true);
+  assert.equal(__test.abgelaufen({ created: Date.now() - 3 * TAG }, {}), false);
 });

@@ -1,48 +1,26 @@
 rules_version = '2';
 // PE Element-Etiketten – Firestore-Regeln
-// Rollen in rollen/{uid}: 'buero' (nur von Hand in der Konsole setzen) oder 'monteur' (setzt der Worker nach PIN).
-// Ohne Eintrag = 'extern' (Kunden, Planer, Architekten, Bauleiter): nur einzelne Dokumente lesen.
+// Zugriff NUR für angemeldete Büro-Konten (E-Mail/Passwort) mit Eintrag rollen/{uid} = {rolle:'buero'}.
+// Die Rolle wird nur von Hand in der Firebase-Konsole gesetzt, nie vom Browser.
+// Baustelle (QR-Code) und Monteure greifen NICHT auf die Datenbank zu, sondern über den Cloudflare Worker
+// (Service-Konto, nur das eine Element zum Etiketten-Schlüssel). Anonyme Anmeldung ist abgeschaltet.
 service cloud.firestore {
   match /databases/{database}/documents {
-    function angemeldet() { return request.auth != null; }
-    function rolle() {
-      return angemeldet() && exists(/databases/$(database)/documents/rollen/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/rollen/$(request.auth.uid)).data.rolle : 'extern';
-    }
-    function buero() { return rolle() == 'buero'; }
-    function monteur() { return rolle() == 'monteur' || buero(); }
-
-    match /objekte/{id} {
-      allow get: if angemeldet();
-      allow list, write: if buero();
-    }
-    match /plaene/{id} {
-      allow get: if angemeldet();
-      allow list, write: if buero();
-    }
-    match /elemente/{id} {
-      allow get: if angemeldet();
-      allow list, create, delete: if buero();
-      allow update: if buero()
-        || (monteur() && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['status', 'montiert', 'fotos']));
-    }
-    match /barcodes/{bc} {
-      allow get: if angemeldet();
-      allow list, write: if buero();
-    }
-    match /settings/{id} {
-      allow get: if angemeldet();
-      allow write: if buero();
+    function buero() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && get(/databases/$(database)/documents/rollen/$(request.auth.uid)).data.rolle == 'buero';
     }
     match /rollen/{uid} {
-      allow get: if angemeldet() && request.auth.uid == uid;
-      allow write: if false;   // nur Konsole bzw. Worker (Service-Konto)
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow list, write: if false;
     }
-    // Alte Dateien aus der Demo-Zeit, bis zur Übertragung nach Dropbox:
+    match /{coll}/{id} {
+      allow read, write: if coll in ['objekte', 'plaene', 'elemente', 'settings', 'zugaenge'] && buero();
+    }
+    // Alte Dateien aus der Demo-Zeit (werden automatisch nach Dropbox übertragen und dann gelöscht)
     match /dateien/{d=**} {
-      allow read: if angemeldet();
-      allow write: if buero();
+      allow read, write: if buero();
     }
   }
 }
