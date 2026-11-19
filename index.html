@@ -304,6 +304,12 @@ dialog::backdrop{background:rgba(18,30,45,.45)}
 /* Toast */
 #toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--tinte);color:#fff;padding:10px 16px;border-radius:8px;font-weight:600;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:50;max-width:calc(100vw - 32px)}
 #toast.an{opacity:1;transform:translate(-50%,0)}
+#upl{position:fixed;left:50%;top:calc(12px + env(safe-area-inset-top,0px));transform:translateX(-50%);width:min(520px,calc(100vw - 32px));background:#fff;border:1px solid var(--linie);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:10px 14px;z-index:60;font-size:14px;display:none}
+#upl.an{display:block}
+#upl b{display:block;margin-bottom:2px}
+#upl small{color:var(--stahl)}
+#upl .pk-balken{height:8px;border-radius:4px}
+#upl.ok .pk-balken i{background:var(--gruen)}
 
 /* Produktion: Barcode scannen, Produktionsplan anzeigen */
 body.modus-prod #admin,body.modus-prod #scan{display:none}
@@ -422,6 +428,7 @@ html:has(body.modus-scan),body.modus-scan{overflow-x:hidden;max-width:100%}
 /* Druck */
 #print-area{display:none}
 @media print{
+#upl{display:none!important}
   @page{size:100mm 100mm;margin:0}
   html,body{background:#fff!important;margin:0!important;padding:0!important}
   body>*:not(#print-area){display:none!important}
@@ -572,12 +579,39 @@ function putFile(path,name,type,buf){
   offeneUploads++; const fertig=()=>{ offeneUploads--; }; done.then(fertig,fertig);
   return {id:path,done};
 }
+/* Fortschritt aller Uploads (Leiste oben) und höchstens 4 gleichzeitig: so ist jede Datei rasch fertig
+   und viele Pläne auf einmal blockieren die Leitung nicht */
+const UPL={n:0,fertig:0,fehler:0,total:0,teile:new Map(),pruef:null,ende:null};
+let uplRaf=0;
+function uplZeigen(){ if(!uplRaf) uplRaf=requestAnimationFrame(()=>{ uplRaf=0; uplMalen(); }); }
+function uplMalen(){
+  let el=$('#upl'); if(!el){ el=document.createElement('div'); el.id='upl'; el.setAttribute('role','status'); document.body.appendChild(el); }
+  const mb=b=>(b/1048576).toLocaleString('de-CH',{maximumFractionDigits:1});
+  if(UPL.pruef){ const {i,n,text}=UPL.pruef;
+    el.className='an'; el.innerHTML=`<b>${h(text)} ${i} von ${n}</b><div class="pk-balken"><i style="width:${n?Math.round(i/n*100):0}%"></i></div>`; return; }
+  if(!UPL.n){ el.className=''; return; }
+  const geladen=[...UPL.teile.values()].reduce((a,b)=>a+b,0);
+  const anteil=UPL.total?Math.min(1,geladen/UPL.total):0; const fertig=UPL.fertig+UPL.fehler>=UPL.n;
+  el.className='an'+(fertig&&!UPL.fehler?' ok':'');
+  el.innerHTML=fertig
+    ?`<b>${UPL.fertig} Datei${UPL.fertig!==1?'en':''} hochgeladen${UPL.fehler?`, ${UPL.fehler} fehlgeschlagen (bitte nochmals hochladen)`:''}</b><div class="pk-balken"><i style="width:100%"></i></div>`
+    :`<b>Hochladen: ${UPL.fertig} von ${UPL.n} Dateien · ${Math.round(anteil*100)} %</b><div class="pk-balken"><i style="width:${Math.round(anteil*100)}%"></i></div><small>${mb(geladen)} von ${mb(UPL.total)} MB · Seite bitte offen lassen</small>`;
+  clearTimeout(UPL.ende);
+  if(fertig) UPL.ende=setTimeout(()=>{ if(UPL.fertig+UPL.fehler>=UPL.n){ Object.assign(UPL,{n:0,fertig:0,fehler:0,total:0}); UPL.teile.clear(); uplMalen(); } },UPL.fehler?12000:4000);
+}
+// Prüf-Fortschritt (z. B. «Pläne werden geprüft 12 von 120»); null blendet aus
+function pruefFortschritt(text,i,n){ UPL.pruef=text?{text,i,n}:null; uplMalen(); }
+const UPL_MAX=4; let uplAktiv=0; const uplWarte=[];
+function uplSlot(){ return new Promise(r=>{ if(uplAktiv<UPL_MAX){ uplAktiv++; r(); } else uplWarte.push(r); }); }
+function uplFrei(){ const n=uplWarte.shift(); if(n) n(); else uplAktiv--; }
 // Dropbox: Die ID ist "dbx:" + Pfad und steht sofort fest, die Datei geht im Hintergrund über den Worker
 function putFileDropbox(path,name,type,buf){
-  const id='dbx:'+path;
+  const id='dbx:'+path; const gr=buf.byteLength;
   DB.put({id,name,type,data:buf}).catch(()=>{});
-  const done=apiHochladen('/api/datei?pfad='+encodeURIComponent(path),new Blob([buf],{type}),{'Content-Type':type})
-    .then(r=>{ if(r.size!==buf.byteLength) throw new Error('Upload unvollständig'); });
+  UPL.n++; UPL.total+=gr; UPL.teile.set(id,0); uplZeigen();
+  const done=uplSlot().then(()=>apiHochladen('/api/datei?pfad='+encodeURIComponent(path),new Blob([buf],{type}),{'Content-Type':type},l=>{ UPL.teile.set(id,Math.min(l,gr)); uplZeigen(); })
+    .then(r=>{ uplFrei(); if(r.size!==gr) throw new Error('Upload unvollständig'); },e=>{ uplFrei(); throw e; }));
+  done.then(()=>{ UPL.fertig++; UPL.teile.set(id,gr); uplZeigen(); },()=>{ UPL.fehler++; UPL.teile.set(id,gr); uplZeigen(); });
   fire(done);
   offeneUploads++; const fertig=()=>{ offeneUploads--; }; done.then(fertig,fertig);
   return {id,done};
@@ -1024,11 +1058,18 @@ function loeschDatum(o){
 function restTage(o){ const d=loeschDatum(o); return d==null?null:Math.max(0,Math.ceil((d-Date.now())/864e5)); }
 const fmtDatum=ts=>new Date(ts).toLocaleDateString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric'});
 let aufbewahrungGeprueft=false;
+// Einmalig für bereits importierte Daten: Spalte «Bezeichnung» aus Enventa (z. B. «Element Typ1.1 RH Vorwand WC»)
+// wird nicht gebraucht, die Nummer hinter dem Projektnamen ebenfalls nicht
+function enventaBereinigen(){
+  for(const e of S.elemente) if(e.artikel&&e.gewerk) patch('elemente',e.id,{gewerk:''});
+  for(const o of S.objekte){ const n=ohneNr(o.name); if(n&&n!==o.name&&S.elemente.some(e=>e.objektId===o.id&&e.artikel)) patch('objekte',o.id,{name:n}); }
+}
 function pruefeAufbewahrung(){
   if(aufbewahrungGeprueft||!S.gestartet||!navigator.onLine||!istBuero()) return;
   if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
   if(!['objekte','elemente','plaene','settings'].every(k=>meta[k]&&!meta[k].fromCache)) return;
   aufbewahrungGeprueft=true;
+  enventaBereinigen();
   const alt=S.objekte.filter(o=>{ const d=loeschDatum(o); return d!=null&&d<Date.now(); });
   if(!alt.length) return;
   alt.forEach(objektLoeschen);
@@ -1427,15 +1468,16 @@ async function massenUpload(files,art){
   const imBlick=elementeImBlick(o); const els=imBlick.length?imBlick:elementeVon(o.id);
   const nurLief=imBlick.length&&S.aktivOrdner!=='*';
   if(!els.length){ toast('Dieses Objekt hat noch keine Elemente. Zuerst die Excel importieren.'); return; }
-  toast(`${pdfs.length} PDF${pdfs.length>1?'s':''} werden geprüft …`);
+  pruefFortschritt('Pläne werden geprüft',0,pdfs.length);
   const bz=badtypZuordnung(pdfs,els);
   const vs=[];
-  for(const x of bz.k){
+  try{ for(const x of bz.k){
+    pruefFortschritt('Pläne werden geprüft',x.i+1,pdfs.length);
     if(x.ziel) vs.push({ids:bz.codeEls.get(x.ziel),bad:x.ziel,rolle:x.rolle,quelle:'bad',sicher:true});
     else if(x.alt) vs.push({ids:[],alt:x.alt,sicher:false});
     else if(x.unnoetig) vs.push({ids:[],unnoetig:x.code,sicher:false});
     else vs.push(await dateiVorschlag(x.f,els));
-  }
+  } }finally{ pruefFortschritt(null); }
   // Auswahl: Badtyp, einzelne Elemente oder ganze Elementtypen
   const typen=new Map(); for(const e of els) if(e.gewerk){ const k=norm(e.gewerk); if(!typen.has(k)) typen.set(k,{name:e.gewerk,ids:[]}); typen.get(k).ids.push(e.id); }
   vs.forEach(v=>{ if(v.typ){ const k=norm(v.typ); if(!typen.has(k)) typen.set(k,{name:v.typ,ids:v.ids}); } });
@@ -1481,6 +1523,8 @@ async function massenUpload(files,art){
   // Einzelne Zuordnungen haben Vorrang vor Badtyp- und Typ-Zuordnungen
   const einzeln=new Set(wahlen.filter(x=>x&&!x.startsWith('typ:')&&!x.startsWith('bad:')));
   const laeufe=[]; const doppelt=new Set();
+  const nWahl=wahlen.filter(Boolean).length; let nVor=0; const vor=()=>pruefFortschritt('Pläne werden vorbereitet',++nVor,nWahl);
+  try{
   // 1. Badtypen: Hauptplan + weitere Pläne
   const proBad=new Map();
   wahlen.forEach((w,i)=>{ if(w.startsWith('bad:')){ const c=w.slice(4); if(!proBad.has(c)) proBad.set(c,[]); proBad.get(c).push(i); } });
@@ -1488,10 +1532,10 @@ async function massenUpload(files,art){
     const ids=(bz.codeEls.get(c)||[]).filter(id=>!einzeln.has(id)); if(!ids.length) continue;
     const kx=idx.map(i=>bz.k[i]);
     const hx=kx.find(x=>x.ziel===c&&x.rolle==='haupt')||kx.find(x=>x.code===c)||kx[0];
-    const x=await elementePlanSetzen(ids,art,hx.f); if(x) laeufe.push(x.done);
+    vor(); const x=await elementePlanSetzen(ids,art,hx.f); if(x) laeufe.push(x.done);
     if(art==='detail'){
       const neu=[];
-      for(const y of kx) if(y!==hx){ const z=await planHochladen(y.f,'detail',o.id,await y.f.arrayBuffer()); neu.push(z.planId); laeufe.push(z.done); }
+      for(const y of kx) if(y!==hx){ vor(); const z=await planHochladen(y.f,'detail',o.id,await y.f.arrayBuffer()); neu.push(z.planId); laeufe.push(z.done); }
       const alte=new Set();
       for(const id of ids){ const e=elem(id); ((e&&e.detailWeitere)||[]).forEach(pid=>{ if(!neu.includes(pid)) alte.add(pid); }); patch('elemente',id,{detailWeitere:neu}); }
       setTimeout(()=>alte.forEach(pid=>planFreigeben(pid,'')),0);
@@ -1506,10 +1550,11 @@ async function massenUpload(files,art){
     else{ if(doppelt.has(wahl)){ toast(`${pdfs[i].name}: Element wurde schon einer anderen Datei zugeordnet, übersprungen`); continue; } ids=[wahl]; }
     if(!ids.length) continue;
     ids.forEach(id=>doppelt.add(id));
-    const x=await elementePlanSetzen(ids,art,pdfs[i]); if(x) laeufe.push(x.done);
+    vor(); const x=await elementePlanSetzen(ids,art,pdfs[i]); if(x) laeufe.push(x.done);
   }
+  }finally{ pruefFortschritt(null); }
   renderAll();
-  if(laeufe.length){ toast(`${laeufe.length} ${laeufe.length>1?MEHRZAHL[art]:ARTEN[art]} werden hochgeladen`); Promise.all(laeufe).then(()=>toast(`${laeufe.length} ${laeufe.length>1?MEHRZAHL[art]:ARTEN[art]} hochgeladen`),()=>{}); }
+  if(laeufe.length) Promise.allSettled(laeufe).then(r=>{ const f=r.filter(x=>x.status==='rejected').length; toast(f?`${f} ${ARTEN[art]}${f>1?'e':''} nicht hochgeladen, bitte nochmals versuchen`:`${laeufe.length} ${laeufe.length>1?MEHRZAHL[art]:ARTEN[art]} hochgeladen`); });
 }
 
 /* ---------- Excel-Import «Planung Betriebsaufträge» aus Enventa ---------- */
@@ -1537,6 +1582,8 @@ function parseBeschreibung(txt){
 // Nasszellen-Nr. irgendwo im Text, z. B. "C5.105.001" (Buchstabe(n), Zahl, mindestens ein Punkt mit Zahl)
 function nasszelleIn(t){ const m=/(?<![A-Za-z0-9])([A-Za-z]{1,3}\d+(?:\.\d+){1,3})(?![\d.]*\d)/.exec(t||''); return m?m[1]:''; }
 // Die Bezeichnung bleibt genau wie in Enventa, die Nasszelle wird nur zusätzlich herausgelesen
+// Projektname aus Enventa ohne angehängte Nummer: «Hotel H4C Andermatt 6320250196» → «Hotel H4C Andermatt»
+const ohneNr=t=>String(t||'').replace(/\s*(?<![\w.])\d{7,}(?![\w.])/g,'').replace(/\s+/g,' ').trim();
 function teilePostext(t){ const b=String(t||'').trim(); return {pos:nasszelleIn(b),bezeichnung:b}; }
 async function importExcel(file){
   if(typeof XLSX==='undefined'){ toast('Excel-Bibliothek nicht geladen. Internet prüfen und Seite neu laden.'); return; }
@@ -1566,7 +1613,7 @@ async function importExcel(file){
   const offenOrdner=offen&&(offen.ordner||[]).find(x=>x.id===S.aktivOrdner);
   const schonDa=zeilen.map(z=>elem('ba_'+z.ba)).filter(Boolean);
   const vorschlag=offen||(schonDa[0]&&obj(schonDa[0].objektId))||findeObjekt(zeilen[0].auftragNr);
-  const projekt=String(w(zeilen[0].r,'projektname')||zeilen[0].b.projekt||'').trim();
+  const projekt=ohneNr(w(zeilen[0].r,'projektname')||zeilen[0].b.projekt);
   const obs=[...S.objekte].sort((a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true}));
   const dlgP=dialog('Excel importieren',`<p><b>${zeilen.length} Element${zeilen.length>1?'e':''}</b> in «${h(file.name)}»${projekt?`, Projekt ${h(projekt)}`:''}.</p>
     <div class="feld-gitter">
@@ -1596,7 +1643,7 @@ async function importExcel(file){
       if(festesObjekt) o=festesObjekt;
       else{
         const x={id:objektIdFuer(z.auftragNr),auftragNr:z.auftragNr,
-          name:String(w(z.r,'projektname')||z.b.projekt||'').trim()||'Auftrag '+z.auftragNr,
+          name:ohneNr(w(z.r,'projektname')||z.b.projekt)||'Auftrag '+z.auftragNr,
           kunde:String(w(z.r,'firma 1')||z.b.kunde||'').trim()};
         if(z.lief) x.lieferdatum=z.lief;
         const vorh=obj(x.id); if(!vorh) x.created=Date.now();
@@ -1607,7 +1654,7 @@ async function importExcel(file){
     }
     const a=auftraege.get(key); a.n++;
     const x={id:'ba_'+z.ba,objektId:a.o.id,barcode:z.ba,auftragNr:z.auftragNr,fixpos:String(w(z.r,'fixpos')||z.b['positions-nr']||'').trim(),
-      pos:z.t.pos,bezeichnung:z.t.bezeichnung||String(w(z.r,'bezeichnung')).trim(),postext:z.b.postext,gewerk:String(w(z.r,'bezeichnung')).trim(),
+      pos:z.t.pos,bezeichnung:z.t.bezeichnung||String(w(z.r,'bezeichnung')).trim(),postext:z.b.postext,gewerk:'',
       artikel:String(w(z.r,'artikel')).trim(),lieferdatum:z.lief};
     if(a.ordnerId) x.ordnerId=a.ordnerId;
     const vorh=elem(x.id);
