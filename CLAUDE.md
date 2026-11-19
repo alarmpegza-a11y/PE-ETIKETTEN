@@ -6,22 +6,24 @@
 
 ---
 
-## 0. Stand der Umsetzung (18.11.2026)
+## 0. Stand der Umsetzung (19.11.2026)
 
-**Massgebend ist `index.html` im Repo `alarmpegza-a11y/PE-ETIKETTEN` (main = live).** Diese Version (Excel-Import Enventa, Unterordner, Aufbewahrung, Produktions-Scan, Layout, Galerie, Montage-Export) ist neuer als Teile der Kapitel unten; bei Widerspruch gilt der Code.
+**Massgebend ist `index.html` im Repo `alarmpegza-a11y/PE-ETIKETTEN` (main = live).** Bei Widerspruch zu den Kapiteln unten gilt der Code und dieses Kapitel. Datenfluss für die IT: `docs/Datenfluss-fuer-IT.md`.
 
-Umgesetzt (Branch `dropbox-live`), getestet; Einrichtung siehe `EINRICHTUNG.md`:
+Live (alle IT-Vorgaben ausser privatem Repo):
 
-- **Dropbox als dritter Speicher** in der Datei-Schicht: `putFile`/`getFile`/`delFile` erkennen IDs `dbx:<pfad>` (Pfade `plaene/{objektId}/{id}.pdf`, `fotos/{elementId}/{id}.jpg`). Aktiv, sobald `WORKER_URL` gesetzt ist; alte Firestore-/Storage-Dateien bleiben lesbar.
-- **Worker** (`worker/`): `POST|GET|DELETE /api/datei?pfad=…` (Pfad streng geprüft, nie überschreiben), `POST /api/monteur-pin`, `GET /api/me`, `GET /api/health`. Rollen aus `rollen/{uid}` per Service-Konto. 13 Tests: `cd worker && npm test`.
-- **Rollen/Login:** Büro und Produktion mit E-Mail/Passwort (`renderLogin`), Monteur per PIN (ersetzt mit Worker den Foto-Code), sonst extern. Ohne Worker und unter alten Regeln verhält sich alles wie früher (`REGELN_ALT`).
-- **Gezielter Scan:** Nicht-Büro lädt nur Element, Objekt und zwei Pläne (`starteScan`). `#b=` sucht `elemente/ba_<nr>`, sonst `barcodes/<nr>`; das Barcode-Verzeichnis pflegt das Büro automatisch (`barcodesPflegen`) für Elemente mit abweichender ID.
-- **Migration automatisch:** `autoMigration` startet `migration(true)` im Büro, sobald alle Daten vom Server da sind; mit Rücklesen und Grössenprüfung, wiederaufsetzbar.
-- `firestore.rules` im Repo, **veröffentlicht am 19.11.2026** (vorher Datensicherung in `Sicherung/`, nicht im Repo). Worker live: https://pe-etiketten-api.alarm-pe-gza.workers.dev, Dropbox-App «PE-Etiketten-Lachen» (App-Ordner).
+- **Dateien in Dropbox** über den Cloudflare Worker (`https://pe-etiketten-api.alarm-pe-gza.workers.dev`), Dropbox-App «PE-Etiketten-Lachen» (App-Ordner). Datei-IDs `dbx:<pfad>` (`plaene/{objektId}/{id}.pdf`, `fotos/{elementId}/{id}.jpg`). Alte Firestore-/Storage-Dateien werden automatisch übertragen (`autoMigration`).
+- **Büro/Produktion:** Firebase E-Mail/Passwort, Rolle `rollen/{uid}.rolle='buero'` nur von Hand in der Konsole. Keine Selbstregistrierung.
+- **Baustelle ohne Anmeldung:** QR-Code `#k=<22 Zeichen Zufall>`; `elemente.zugang` + `zugaenge/{k}={elementId}` pflegt das Büro automatisch (`zugaengePflegen`, `sichereZugang`). Der Worker (`/api/scan`) liefert nur dieses Element. Ältere QR-Formate (`#b=`, `#e=`, `#a=`) gehen nur noch fürs Büro, sonst Hinweis «neu drucken».
+- **Monteur:** PIN (Secret `MONTEUR_PIN`) → `/api/scan/pin` → signierte Sitzung (HMAC, 365 Tage, PIN-Wechsel macht alle ungültig), gespeichert in `localStorage pe-et-monteurSitzung`. Montiert/Fotos schreibt der Worker per Service-Konto.
+- **Firestore-Regeln** (`firestore.rules`): nur Büro, nicht anonym. **Anonyme Anmeldung deaktiviert.** Web-API-Key eingeschränkt auf `alarmpegza-a11y.github.io/*` und `etikette-fa8d1.firebaseapp.com/*`.
+- **Aufbewahrung 28 Tage** ab Anlegen/Import (`settings.aufbewahrungTage`, «Behalten» verlängert). Worker sperrt danach sofort (410), das Büro löscht automatisch (`pruefeAufbewahrung`).
+- **Worker-Updates:** `cd worker && powershell -ExecutionPolicy Bypass -File .\deploy.ps1` (fragt einen Cloudflare-API-Token ab, Token danach löschen). Tests: `npm test` (15).
+- Datensicherung vom 19.11.2026 in `Sicherung/` (nicht im Repo).
 
-Tests im Browser: `node test/dev-server.mjs` (Firebase inkl. Regeln und Dropbox nachgebildet, echter Worker-Code). `/` = mit Worker, `/alt.html` = ohne; `ALT_REGELN=1` = alte Regeln. Testkonto `buero@test.ch` / `test1234`, Test-PIN `123456`. `test/workerd-check.mjs` prüft in workerd (braucht auf diesem PC das Visual C++ Redistributable).
+Tests im Browser: `node test/dev-server.mjs` (Firebase inkl. Regeln und Dropbox nachgebildet, echter Worker-Code, nie der echte Worker). Testkonto `buero@test.ch` / `test1234`, Test-PIN `123456`.
 
-Offen: Enventa-Druckformular mit QR (Kapitel 10), Warteschlange für Foto-Uploads ohne Netz.
+Offen: Repos privat (GitHub Pro) zurückgestellt; Enventa-Druckformular mit QR (Kapitel 10, braucht jetzt den `#k=`-Link, nicht die Barcode-Nummer).
 
 ---
 
