@@ -24,6 +24,8 @@ Live (alle IT-Vorgaben ausser privatem Repo):
 
 - **Lieferungen:** `objekte.ordner=[{id,name,haus,geschosse,ausfuehrung:[planId]}]`, Elemente tragen `ordnerId`. Eröffnung und jeder Import verlangen eine Lieferung (Haus + Geschosse, «Nur ein Haus»); Import schlägt immer «Neue Lieferung» vor. Ausführungspläne (`art:'ausfuehrung'`) pro Lieferung; der Worker (`/api/scan`) liefert `lieferung.plaene` nur der eigenen Lieferung.
 
+- **Detailpläne nach Badtyp** (`badTyp`, `planKopf`, `badtypZuordnung` in `massenUpload`): Badtyp (z. B. `B6.G`) aus Dateiname und Element-Bezeichnung; pro Planummer nur neueste Version (Datum, Index); nicht vorkommende Badtypen werden nicht hochgeladen; Teildetails (`B7.A.1` zu `B7.A`) und weitere Pläne desselben Badtyps landen in `elemente.detailWeitere=[planId]`, der Worker liefert sie unter `plaene.weitere` und `/api/scan/datei?art=detail&id=`.
+
 Tests im Browser: `node test/dev-server.mjs` (Firebase inkl. Regeln und Dropbox nachgebildet, echter Worker-Code, nie der echte Worker). Testkonto `buero@test.ch` / `test1234`, Test-PIN `123456`.
 
 Offen: Repos privat (GitHub Pro) zurückgestellt; Enventa-Druckformular mit QR (Kapitel 10, braucht jetzt den `#k=`-Link, nicht die Barcode-Nummer).
