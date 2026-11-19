@@ -17,7 +17,7 @@ Umgesetzt (Branch `dropbox-live`), getestet; Einrichtung siehe `EINRICHTUNG.md`:
 - **Rollen/Login:** Büro und Produktion mit E-Mail/Passwort (`renderLogin`), Monteur per PIN (ersetzt mit Worker den Foto-Code), sonst extern. Ohne Worker und unter alten Regeln verhält sich alles wie früher (`REGELN_ALT`).
 - **Gezielter Scan:** Nicht-Büro lädt nur Element, Objekt und zwei Pläne (`starteScan`). `#b=` sucht `elemente/ba_<nr>`, sonst `barcodes/<nr>`; das Barcode-Verzeichnis pflegt das Büro automatisch (`barcodesPflegen`) für Elemente mit abweichender ID.
 - **Migration automatisch:** `autoMigration` startet `migration(true)` im Büro, sobald alle Daten vom Server da sind; mit Rücklesen und Grössenprüfung, wiederaufsetzbar.
-- `firestore.rules` im Repo (erst nach dem Worker veröffentlichen).
+- `firestore.rules` im Repo, **veröffentlicht am 19.11.2026** (vorher Datensicherung in `Sicherung/`, nicht im Repo). Worker live: https://pe-etiketten-api.alarm-pe-gza.workers.dev, Dropbox-App «PE-Etiketten-Lachen» (App-Ordner).
 
 Tests im Browser: `node test/dev-server.mjs` (Firebase inkl. Regeln und Dropbox nachgebildet, echter Worker-Code). `/` = mit Worker, `/alt.html` = ohne; `ALT_REGELN=1` = alte Regeln. Testkonto `buero@test.ch` / `test1234`, Test-PIN `123456`. `test/workerd-check.mjs` prüft in workerd (braucht auf diesem PC das Visual C++ Redistributable).
 
