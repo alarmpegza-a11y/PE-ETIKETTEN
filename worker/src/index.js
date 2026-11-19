@@ -221,6 +221,8 @@ export function abgelaufen(obj, set, jetzt = Date.now()) {
   const bis = obj.behaltenBis ? Number(obj.behaltenBis) : (aufbewahrTage(set) && obj.created ? Number(obj.created) + aufbewahrTage(set) * 864e5 : null);
   return bis != null && jetzt > bis;
 }
+const SCHLUESSEL_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const lieferungVon = z => (z.obj && z.obj.ordner || []).find(x => x && z.el.ordnerId && x.id === z.el.ordnerId) || null;
 const nur = (o, felder) => { const r = {}; for (const f of felder) if (o && o[f] !== undefined && o[f] !== null) r[f] = o[f]; return r; };
 
 async function scanLesen(request, env, z) {
@@ -231,12 +233,18 @@ async function scanLesen(request, env, z) {
     el.detailPlanId ? fsGet(env, 'plaene', el.detailPlanId) : null
   ]);
   const planInfo = p => p ? { name: p.name || 'Plan.pdf', size: p.size || 0, url: p.url || '', datei: !!p.fileId, bereit: p.fertig !== false && String(p.fileId || '').startsWith('dbx:') } : null;
+  // Ausführungspläne der Lieferung (Haus + Geschosse), zu der das Element gehört
+  const et = lieferungVon(z);
+  const ausfIds = (et && et.ausfuehrung || []).filter(x => SCHLUESSEL_ID_RE.test(x || '')).slice(0, 60);
+  const ausf = (await Promise.all(ausfIds.map(id => fsGet(env, 'plaene', id))))
+    .map((p, i) => p && p.art === 'ausfuehrung' && p.objektId === el.objektId ? { id: ausfIds[i], ...planInfo(p) } : null).filter(Boolean);
   return json({
-    element: { id: z.id, ...nur(el, ['pos', 'bezeichnung', 'gewerk', 'geschoss', 'lieferdatum', 'auftragNr', 'barcode', 'status', 'montiert', 'objektId']),
+    element: { id: z.id, ...nur(el, ['pos', 'bezeichnung', 'gewerk', 'geschoss', 'lieferdatum', 'auftragNr', 'barcode', 'status', 'montiert', 'objektId', 'ordnerId']),
       fotos: (el.fotos || []).filter(f => f && f.id).map(f => nur(f, ['id', 'ts', 'von'])) },
     objekt: nur(obj, ['name', 'kunde', 'strasse', 'plzOrt', 'auftragNr', 'lieferdatum']),
     plaene: { montage: planInfo(mp), detail: planInfo(dp) },
     logo: set && set.logo ? set.logo : '',
+    lieferung: et ? { name: et.name || '', plaene: ausf } : null,
     monteur: await istMonteur(request, env)
   });
 }
@@ -249,6 +257,13 @@ async function scanDatei(env, ctx, z, q) {
     const p = pid ? await fsGet(env, 'plaene', pid) : null;
     if (!p || !p.fileId) throw new HttpError(404, 'plan-fehlt', 'Kein Plan');
     fileId = p.fileId; name = p.name || 'Plan.pdf';
+  } else if (art === 'ausfuehrung') {
+    const id = q.get('id') || '';
+    const et = lieferungVon(z);
+    if (!SCHLUESSEL_ID_RE.test(id) || !et || !(et.ausfuehrung || []).includes(id)) throw new HttpError(404, 'plan-fehlt', 'Kein Plan');
+    const p = await fsGet(env, 'plaene', id);
+    if (!p || p.art !== 'ausfuehrung' || p.objektId !== z.el.objektId || !p.fileId) throw new HttpError(404, 'plan-fehlt', 'Kein Plan');
+    fileId = p.fileId; name = p.name || 'Ausfuehrungsplan.pdf';
   } else if (foto) {
     const f = (z.el.fotos || []).find(x => x && x.id === foto);
     if (!f) throw new HttpError(404, 'foto-fehlt', 'Foto nicht gefunden');

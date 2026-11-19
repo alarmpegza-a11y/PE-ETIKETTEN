@@ -279,3 +279,19 @@ test('QR-Adresse leitet zur App weiter (Schlüssel nach # bleibt im Browser)', a
   const ohne = await worker.fetch(new Request('https://w.test/'), { ...env(), APP_URL: '' }, { waitUntil() {} });
   assert.equal(ohne.status, 503);
 });
+
+test('Scan: Ausführungspläne nur der eigenen Lieferung', async () => {
+  scanDaten();
+  fsDoc('objekte', 'obj1', { ...FS.get('objekte/obj1'), ordner: [{ id: 'L1', name: 'Haus A · EG–3.OG', ausfuehrung: ['a1'] }, { id: 'L2', name: 'Haus A · 4.–5.OG', ausfuehrung: ['a2'] }] });
+  fsDoc('elemente', 'el1', { ...FS.get('elemente/el1'), ordnerId: 'L1' });
+  fsDoc('plaene', 'a1', { objektId: 'obj1', art: 'ausfuehrung', ordnerId: 'L1', name: 'Grundriss EG.pdf', fileId: 'dbx:plaene/obj1/a1.pdf', size: PDF.length, fertig: true });
+  fsDoc('plaene', 'a2', { objektId: 'obj1', art: 'ausfuehrung', ordnerId: 'L2', name: 'Grundriss 4.OG.pdf', fileId: 'dbx:plaene/obj1/a2.pdf', size: PDF.length, fertig: true });
+  DBX.set('/plaene/obj1/a1.pdf', PDF); DBX.set('/plaene/obj1/a2.pdf', PDF);
+  const d = await (await scan('?k=' + K)).json();
+  assert.equal(d.lieferung.name, 'Haus A · EG–3.OG');
+  assert.deepEqual(d.lieferung.plaene.map(p => p.id), ['a1']);
+  assert.equal(d.element.ordnerId, 'L1');
+  assert.equal((await scan('/datei?k=' + K + '&art=ausfuehrung&id=a1')).status, 200);
+  assert.equal((await scan('/datei?k=' + K + '&art=ausfuehrung&id=a2')).status, 404, 'Plan einer anderen Lieferung');
+  assert.equal((await scan('/datei?k=' + K + '&art=ausfuehrung&id=p1')).status, 404, 'Montageplan über Ausführungs-Weg');
+});

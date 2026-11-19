@@ -337,6 +337,8 @@ body.modus-login{background:var(--beton)}
 .lg-fehler{color:var(--rot);font-size:14px;font-weight:600;min-height:1.4em;margin:4px 0 10px}
 .lg-link{background:none;border:0;color:var(--blau);font-weight:600;cursor:pointer;padding:10px 0 0;font-size:14px}
 .btn[hidden]{display:none}
+.lief-titel{font-size:15px;font-weight:700;margin:18px 0 4px}
+.lief-neu[hidden]{display:none}
 .tb-user{font-size:13px;color:var(--stahl);padding:0 6px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .banner.info{background:var(--amber-hell);color:var(--amber)}
 #migText{font-size:14px}
@@ -600,7 +602,8 @@ function getFile(id){
     // Baustelle ohne Anmeldung: Pläne («scan:<art>:…») und Fotos über den Etiketten-Schlüssel
     if(String(id).startsWith('scan:')||(scanModus()&&istDbx(id))){
       try{
-        const teil=String(id).startsWith('scan:')?'&art='+id.split(':')[1]:'&foto='+encodeURIComponent(id);
+        const sp=String(id).split(':');
+        const teil=sp[0]==='scan'?'&art='+sp[1]+(sp[4]?'&id='+encodeURIComponent(sp[4]):''):'&foto='+encodeURIComponent(id);
         const r=await apiLaden('/api/scan/datei'+scanK()+teil,(n,t)=>meldeFortschritt(id,n,t,true),true);
         const f={id,name:id.split('/').pop(),type:r.type,data:r.data}; DB.put(f).catch(()=>{}); return f;
       }catch(err){ console.warn('Datei nicht ladbar',id,err); DATEI_FEHLER.set(id,{404:'fehlt',409:'uebertragung',410:'abgelaufen'}[err.status]||'netz'); return null; }
@@ -1032,8 +1035,8 @@ function ordnerListe(o){
   const ord=o.ordner||[]; const els=S.elemente.filter(e=>e.objektId===o.id);
   const zahl=id=>els.filter(e=>imOrdner(e,id)).length;
   const knopf=(id,name)=>`<button class="ordner-item${S.aktivOrdner===id?' aktiv':''}" data-ordner="${id}"><span>${h(name)}</span><span class="obj-count">${zahl(id)}</span></button>`;
-  return `<div class="ordner-liste">${ord.length?knopf('*','Alle Elemente')+ord.map(x=>knopf(x.id,x.name)).join('')+(zahl('-')?knopf('-','Ohne Unterordner'):''):''}
-    <button class="ordner-neu" data-act="ordnerNeu">+ Unterordner</button></div>`;
+  return `<div class="ordner-liste">${ord.length?knopf('*','Alle Lieferungen')+ord.map(x=>knopf(x.id,x.name)).join('')+(zahl('-')?knopf('-','Ohne Lieferung'):''):''}
+    <button class="ordner-neu" data-act="ordnerNeu">+ Lieferung (Haus, Geschosse)</button></div>`;
 }
 function planSpalte(art,titel,liste){
   return `<div class="plan-spalte">
@@ -1085,7 +1088,8 @@ function renderObjekt(){
   if(S.aktivOrdner!=='*'&&S.aktivOrdner!=='-'&&!(o.ordner||[]).some(x=>x.id===S.aktivOrdner)) S.aktivOrdner='*';
   const els=elementeImBlick(o);
   const ordAkt=(o.ordner||[]).find(x=>x.id===S.aktivOrdner);
-  const ordTitel=ordAkt?ordAkt.name:S.aktivOrdner==='-'?'Ohne Unterordner':'';
+  const ordTitel=ordAkt?ordAkt.name:S.aktivOrdner==='-'?'Ohne Lieferung':'';
+  const ausf=ordAkt?S.plaene.filter(p=>p.art==='ausfuehrung'&&p.objektId===o.id&&p.ordnerId===ordAkt.id).sort((a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true})):[];
   const sortN=(a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true});
   const von=art=>S.plaene.filter(p=>p.objektId===o.id&&p.art===art).sort(sortN);
   const nPlaene=S.plaene.filter(p=>p.objektId===o.id).length;
@@ -1102,7 +1106,7 @@ function renderObjekt(){
         ${loeschDatum(o)!=null?`<div><dt>Automatisch gelöscht am</dt><dd class="frist${restTage(o)<=14?' bald':''}">${fmtDatum(loeschDatum(o))} <button class="btn sm" data-act="objektBehalten" title="Frist um ${aufbewahrTage()||28} Tage verlängern">Behalten</button></dd></div>`:''}
       </dl></div>
       <div class="block-aktionen">
-        ${ordAkt?`<button class="btn" data-act="ordnerUmbenennen">Unterordner umbenennen</button><button class="btn danger" data-act="ordnerLoeschen">Unterordner löschen</button>`:''}
+        ${ordAkt?`<button class="btn" data-act="ordnerUmbenennen">Lieferung bearbeiten</button><button class="btn danger" data-act="ordnerLoeschen">Lieferung löschen</button>`:''}
         <button class="btn" data-act="objektBearbeiten">Objekt bearbeiten</button>
         <button class="btn danger" data-act="objektLoeschenKnopf">Objekt löschen</button>
       </div>
@@ -1112,14 +1116,20 @@ function renderObjekt(){
         <div class="block-aktionen">
           <button class="btn" data-act="druckAuswahl" id="btnAuswahl" ${S.auswahl.size?'':'disabled'}>Auswahl drucken (${S.auswahl.size})</button>
           <button class="btn danger" data-act="loeschenAuswahl" id="btnLoeschen" ${S.auswahl.size?'':'disabled'}>Auswahl löschen (${S.auswahl.size})</button>
-          <select class="btn" data-verschieben id="selVerschieben" ${S.auswahl.size?'':'disabled'} aria-label="Auswahl in Unterordner verschieben">
-            <option value="">Auswahl verschieben nach …</option>${(o.ordner||[]).map(x=>`<option value="${x.id}">${h(x.name)}</option>`).join('')}<option value="-">Ohne Unterordner</option><option value="__neu">Neuer Unterordner …</option></select>
+          <select class="btn" data-verschieben id="selVerschieben" ${S.auswahl.size?'':'disabled'} aria-label="Auswahl in Lieferung verschieben">
+            <option value="">Auswahl verschieben nach …</option>${(o.ordner||[]).map(x=>`<option value="${x.id}">${h(x.name)}</option>`).join('')}<option value="-">Ohne Lieferung</option><option value="__neu">Neue Lieferung …</option></select>
           ${nFotos?`<button class="btn" data-galerie="objekt:${o.id}">Alle Fotos (${nFotos})</button>`:''}
-          <button class="btn" data-act="montageSichern" ${els.length?'':'disabled'} title="Alle Montagefotos und die Montageliste dieses ${ordTitel?'Unterordners':'Objekts'} speichern">Montage speichern${nFotos?` (${nFotos} Fotos)`:''}</button>
+          <button class="btn" data-act="montageSichern" ${els.length?'':'disabled'} title="Alle Montagefotos und die Montageliste ${ordTitel?'dieser Lieferung':'dieses Objekts'} speichern">Montage speichern${nFotos?` (${nFotos} Fotos)`:''}</button>
           <button class="btn primary" data-act="druckAlle" ${els.length?'':'disabled'}>Alle Etiketten drucken (${nEtiketten})</button>
           <button class="btn" data-act="neuesElement">Element hinzufügen</button>
         </div></div>
       ${els.length?tabelle(els):`<div class="leer-gross"><h2>Noch keine Elemente</h2><p>Excel aus Enventa importieren oder das erste Element von Hand erfassen.</p><label class="btn primary">Excel importieren<input type="file" accept=".xlsx,.xls,.csv" hidden data-excel></label> <button class="btn" data-act="neuesElement">Element hinzufügen</button></div>`}
+    </section>
+    <section class="block">
+      <div class="block-kopf"><div><h2>Ausführungspläne${ordAkt?` <span class="zahl">${ausf.length}</span>`:''}</h2><p>${ordAkt?`Für die Lieferung <b>${h(ordAkt.name)}</b>. Die Monteure sehen sie beim Scannen jedes Elements dieser Lieferung.`:(o.ordner||[]).length?'Links eine Lieferung wählen, dann hier ihre Ausführungspläne hochladen.':'Zuerst links eine Lieferung anlegen («+ Lieferung»).'}</p></div>
+        ${ordAkt?`<div class="block-aktionen"><label class="btn primary">Ausführungspläne hochladen<input type="file" accept="application/pdf,.pdf" multiple hidden data-ausf-upload="${ordAkt.id}"></label></div>`:''}</div>
+      ${ordAkt?(ausf.length?`<div class="plan-spalte"><ul class="plan-liste">${ausf.map(p=>`<li><span class="pdf-ico" aria-hidden="true">PDF</span><span class="plan-name" title="${h(p.name)}">${h(p.name)}<small>${p.fertig===false?'wird hochgeladen, Seite offen lassen':kb(p.size||0)}</small></span>
+        <span class="plan-akt"><button class="btn sm ghost" data-plan-dl="${p.id}">Herunterladen</button><button class="btn sm ghost danger" data-plan-del="${p.id}">Entfernen</button></span></li>`).join('')}</ul></div>`:'<p class="leer">Noch keine Ausführungspläne für diese Lieferung.</p>'):''}
     </section>
     <section class="block">
       <div class="block-kopf"><div><h2>Viele Pläne auf einmal</h2><p>Mehrere PDFs wählen. Heisst die Datei gleich wie die Bezeichnung des Elements (z. B. <b>H4C Andermatt, C5.106.001, Typ 6.4.3, Bad Typ B6.G (WC), 6.OG.pdf</b>), wird sie automatisch zugeordnet. Du prüfst und bestätigst.</p></div></div>
@@ -1452,23 +1462,26 @@ async function importExcel(file){
   const schonDa=zeilen.map(z=>elem('ba_'+z.ba)).filter(Boolean);
   const vorschlag=offen||(schonDa[0]&&obj(schonDa[0].objektId))||findeObjekt(zeilen[0].auftragNr);
   const projekt=String(w(zeilen[0].r,'projektname')||zeilen[0].b.projekt||'').trim();
-  const ordnerNamen=[...new Set(S.objekte.flatMap(o=>(o.ordner||[]).map(x=>x.name)))];
   const obs=[...S.objekte].sort((a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true}));
-  const ziel=await dialog('Excel importieren',`<p><b>${zeilen.length} Element${zeilen.length>1?'e':''}</b> in «${h(file.name)}»${projekt?`, Projekt ${h(projekt)}`:''}.</p>
+  const dlgP=dialog('Excel importieren',`<p><b>${zeilen.length} Element${zeilen.length>1?'e':''}</b> in «${h(file.name)}»${projekt?`, Projekt ${h(projekt)}`:''}.</p>
     <div class="feld-gitter">
       <label class="feld voll"><span>In welches Objekt?</span><select name="ziel">
         <option value="__auto" ${vorschlag?'':'selected'}>Automatisch nach Auftragsnummer${vorschlag?'':` (neues Objekt «${h(projekt||zeilen[0].auftragNr)}»)`}</option>
         ${obs.map(o=>`<option value="${o.id}" ${vorschlag&&vorschlag.id===o.id?'selected':''}>${h(o.name)}${o.auftragNr?` · Auftrag ${h(o.auftragNr)}`:''}</option>`).join('')}
       </select></label>
-      <label class="feld voll"><span>Unterordner (optional, z. B. Haus A)</span><input name="ordner" list="ordnerVorschlaege" value="${h(offenOrdner?offenOrdner.name:'')}" placeholder="leer lassen = kein Unterordner" autocomplete="off">
-        <datalist id="ordnerVorschlaege">${ordnerNamen.map(n=>`<option value="${h(n)}">`).join('')}</datalist></label>
+      <label class="feld voll"><span>Lieferung (Haus und Geschosse) *</span><select name="lieferung" data-liefwahl>${liefOptionen(vorschlag,'')}</select></label>
     </div>
+    ${lieferungFelder(vorschlag)}
     ${(()=>{ const woanders=schonDa.filter(e=>!vorschlag||e.objektId!==vorschlag.id); const o2=woanders[0]&&obj(woanders[0].objektId);
       return woanders.length?`<p class="hinweis">${woanders.length} dieser Elemente sind bereits im Objekt «${h(o2?o2.name:'?')}»${o2&&o2.auftragNr?` (Auftrag ${h(o2.auftragNr)})`:''}. Sie werden ins gewählte Objekt verschoben, ihre Pläne und Fotos kommen mit.</p>`:''; })()}
     <p class="leer">Gleiche Betriebsaufträge werden aktualisiert, nicht doppelt angelegt. Pläne, Anzahl, Status und Fotos bleiben erhalten.</p>`,{ok:'Importieren'});
+  setTimeout(()=>liefAnpassen($('#dlg form')),0);
+  const ziel=await dlgP;
   if(!ziel) return;
+  const liefWahl=ziel.data.lieferung||'__neu';
+  let lf=null;
+  if(liefWahl==='__neu'){ lf=lieferungAusFormular(ziel.data); if(typeof lf==='string'){ toast(lf); return; } }
   const festesObjekt=ziel.data.ziel!=='__auto'?obj(ziel.data.ziel):null;
-  const ordnerName=String(ziel.data.ordner||'').trim();
   // 3. Schreiben
   const auftraege=new Map(); let neu=0, aktualisiert=0;
   for(const z of zeilen){
@@ -1484,7 +1497,8 @@ async function importExcel(file){
         const vorh=obj(x.id); if(!vorh) x.created=Date.now();
         anlegen('objekte',x,vorh||{strasse:'',plzOrt:'',lieferdatum:''}); o=obj(x.id);
       }
-      auftraege.set(key,{o,n:0,ordnerId:ordnerName?ordnerFinden(o,ordnerName):''});
+      const ordnerId=lf?lieferungFinden(o,lf):((obj(o.id)||o).ordner||[]).some(x=>x.id===liefWahl)?liefWahl:'';
+      auftraege.set(key,{o,n:0,ordnerId});
     }
     const a=auftraege.get(key); a.n++;
     const x={id:'ba_'+z.ba,objektId:a.o.id,barcode:z.ba,auftragNr:z.auftragNr,fixpos:String(w(z.r,'fixpos')||z.b['positions-nr']||'').trim(),
@@ -1499,10 +1513,62 @@ async function importExcel(file){
   }
   const erster=[...auftraege.values()][0];
   S.aktivObjekt=erster.o.id; S.aktivOrdner=erster.ordnerId||'*'; S.aktivElement=null; S.auswahl.clear(); renderAll();
-  const liste=[...auftraege.values()].map(a=>`<li><b>${h(a.o.name)}</b>${a.ordnerId?` › ${h(ordnerName)}`:''}: ${a.n} Element${a.n>1?'e':''}</li>`).join('');
+  const liefNameVon=a=>(((obj(a.o.id)||a.o).ordner||[]).find(x=>x.id===a.ordnerId)||{}).name||'';
+  const liste=[...auftraege.values()].map(a=>`<li><b>${h(a.o.name)}</b>${a.ordnerId?` › ${h(liefNameVon(a))}`:''}: ${a.n} Element${a.n>1?'e':''}</li>`).join('');
   dialog('Import abgeschlossen',`<ul>${liste}</ul><p>${neu} neu, ${aktualisiert} aktualisiert.</p>`,{ok:'OK',info:true});
 }
-// Unterordner im Objekt suchen (gleicher Name) oder neu anlegen, gibt die ID zurück
+/* ---------- Lieferungen (Haus + Geschosse) ----------
+   Ein Objekt hat eine oder mehrere Lieferungen, z. B. «Haus A · EG–3.OG», «Haus A · 4.–5.OG», «Haus B · EG–2.OG».
+   Jedes Element gehört zu genau einer Lieferung (ordnerId). Pro Lieferung gibt es Ausführungspläne für die Monteure.
+   Gespeichert in objekte/{id}.ordner = [{id,name,haus,geschosse,ausfuehrung:[planId]}]. */
+const lieferName=(haus,geschosse)=>[String(haus||'').trim(),String(geschosse||'').trim()].filter(Boolean).join(' · ');
+function lieferungFelder(o,v={}){
+  const haeuser=[...new Set((o&&o.ordner||[]).map(x=>x.haus).filter(Boolean))];
+  const einHaus=v.geschosse&&!v.haus;
+  return `<div class="feld-gitter lief-neu">
+    <label class="feld"><span>Haus *</span><input name="haus" list="hausVorschlaege" value="${h(v.haus||'')}" placeholder="z. B. Haus A" autocomplete="off" ${einHaus?'disabled':'required'}>
+      <datalist id="hausVorschlaege">${haeuser.map(n=>`<option value="${h(n)}">`).join('')}</datalist></label>
+    <label class="feld"><span>Geschosse dieser Lieferung *</span><input name="geschosse" value="${h(v.geschosse||'')}" placeholder="z. B. EG–3.OG" autocomplete="off" required></label>
+    <label class="check feld voll"><input type="checkbox" name="einHaus" data-einhaus ${einHaus?'checked':''}> Nur ein Haus (kein Hausname nötig)</label>
+  </div>`;
+}
+function lieferungAusFormular(d){
+  const einHaus=!!d.einHaus; const haus=einHaus?'':String(d.haus||'').trim(); const geschosse=String(d.geschosse||'').trim();
+  if(!einHaus&&!haus) return 'Bitte das Haus angeben oder «Nur ein Haus» anhaken.';
+  if(!geschosse) return 'Bitte die Geschosse dieser Lieferung angeben, z. B. EG–3.OG.';
+  return {haus,geschosse};
+}
+function lieferungNeu(lf){ return {id:uid(),name:lieferName(lf.haus,lf.geschosse),haus:lf.haus,geschosse:lf.geschosse,ausfuehrung:[]}; }
+// Gleiche Lieferung (Haus + Geschosse) wiederverwenden, sonst neu anlegen. Gibt die ID zurück.
+function lieferungFinden(o,lf){
+  const name=lieferName(lf.haus,lf.geschosse);
+  const vorh=(o.ordner||[]).find(x=>String(x.name||'').trim().toLowerCase()===name.toLowerCase()); if(vorh) return vorh.id;
+  const neu=lieferungNeu(lf);
+  patch('objekte',o.id,{ordner:[...(o.ordner||[]),neu]}); return neu.id;
+}
+function liefOptionen(o,sel){
+  // «Neue Lieferung» steht zuoberst und ist vorgewählt: Jeder Import ist eine eigene Lieferung, ausser man wählt bewusst eine bestehende
+  return `<option value="__neu" ${sel?'':'selected'}>Neue Lieferung …</option>`+(o&&o.ordner||[]).map(x=>`<option value="${x.id}" ${x.id===sel?'selected':''}>Bestehende: ${h(x.name)}</option>`).join('');
+}
+// Felder «Neue Lieferung» nur zeigen und verlangen, wenn «Neue Lieferung …» gewählt ist
+function liefAnpassen(f){
+  if(!f) return; const wahl=f.querySelector('[data-liefwahl]'); const box=f.querySelector('.lief-neu'); if(!box) return;
+  const neu=!wahl||wahl.value==='__neu'; box.hidden=!neu;
+  const ein=f.querySelector('[data-einhaus]');
+  f.querySelector('[name=geschosse]').required=neu;
+  const hausI=f.querySelector('[name=haus]'); hausI.required=neu&&!(ein&&ein.checked); hausI.disabled=!!(ein&&ein.checked);
+}
+async function ausfHochladen(ordnerId,files){
+  const o=obj(S.aktivObjekt); if(!o) return;
+  const pdfs=files.filter(pdfPruefen); if(!pdfs.length) return;
+  const ids=[], laeufe=[];
+  for(const f of pdfs){ const r=await planHochladen(f,'ausfuehrung',o.id,await f.arrayBuffer()); patch('plaene',r.planId,{ordnerId}); ids.push(r.planId); laeufe.push(r.done); }
+  const oo=obj(o.id)||o;
+  patch('objekte',o.id,{ordner:(oo.ordner||[]).map(x=>x.id===ordnerId?{...x,ausfuehrung:[...new Set([...(x.ausfuehrung||[]),...ids])]}:x)});
+  renderAll(); toast(`${ids.length} Ausführungsplan${ids.length>1?'pläne':''} werden hochgeladen`.replace('Ausführungsplanpläne','Ausführungspläne'));
+  Promise.all(laeufe).then(()=>toast(`${ids.length===1?'Ausführungsplan':ids.length+' Ausführungspläne'} gespeichert`),()=>{});
+}
+// Alte Funktion (Unterordner nach Namen), nur noch für ältere Aufrufe
 function ordnerFinden(o,name){
   const vorh=(o.ordner||[]).find(x=>x.name.trim().toLowerCase()===name.trim().toLowerCase());
   if(vorh) return vorh.id;
@@ -1528,6 +1594,7 @@ function elementLoeschen(e){
 function planLoeschenIntern(p){
   // Die Datei nur löschen, wenn kein anderer Plan dieselbe Datei verwendet
   if(p.fileId&&!S.plaene.some(x=>x.id!==p.id&&x.fileId===p.fileId)) delFile(p.fileId);
+  if(p.art==='ausfuehrung'){ const o=obj(p.objektId); if(o) patch('objekte',o.id,{ordner:(o.ordner||[]).map(x=>x.id===p.ordnerId?{...x,ausfuehrung:(x.ausfuehrung||[]).filter(i=>i!==p.id)}:x)}); }
   entferne('plaene',p.id);
   for(const e of S.elemente){
     const f={};
@@ -1555,14 +1622,16 @@ const ACT={
     S.aktivObjekt=o.id; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast(war?'Auftrag geöffnet':'Auftrag angelegt');
   },
   async neuesObjekt(){
-    const r=await dialog('Neues Objekt',objektForm({}),{ok:'Objekt anlegen'}); if(!r) return;
-    const d=clean(r.data);
+    const r=await dialog('Neues Objekt',objektForm({})+`<h3 class="lief-titel">Erste Lieferung</h3><p class="leer">Welches Haus und welche Geschosse werden geliefert? Weitere Lieferungen (z. B. obere Geschosse oder weitere Häuser) kommen später beim nächsten Import dazu.</p>`+lieferungFelder(null),{ok:'Objekt anlegen'}); if(!r) return;
+    const lf=lieferungAusFormular(r.data); if(typeof lf==='string'){ toast(lf); return; }
+    const d=clean(r.data); delete d.haus; delete d.geschosse; delete d.einHaus;
     if(schluessel(d.auftragNr)){
       const war=findeObjekt(d.auftragNr);
       if(war){ S.aktivObjekt=war.id; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast(`Auftrag ${d.auftragNr} gibt es schon, er wurde geöffnet`); return; }
     }
-    const o={...d,id:schluessel(d.auftragNr)?objektIdFuer(d.auftragNr):uid(),created:Date.now()};
-    saveObj(o); S.aktivObjekt=o.id; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast('Objekt angelegt');
+    const l1=lieferungNeu(lf);
+    const o={...d,id:schluessel(d.auftragNr)?objektIdFuer(d.auftragNr):uid(),created:Date.now(),ordner:[l1]};
+    saveObj(o); S.aktivObjekt=o.id; S.aktivOrdner=l1.id; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast(`Objekt angelegt mit Lieferung «${l1.name}»`);
   },
   async objektBearbeiten(){
     const o=obj(S.aktivObjekt); if(!o) return;
@@ -1620,25 +1689,27 @@ const ACT={
   },
   async ordnerNeu(){
     const o=obj(S.aktivObjekt); if(!o) return;
-    const r=await dialog('Neuer Unterordner',`<div class="feld-gitter">${feld('name','Name',``,{required:true,ph:'z. B. Haus A',voll:true})}</div>`,{ok:'Anlegen'}); if(!r) return;
-    const name=String(r.data.name||'').trim(); if(!name) return;
-    S.aktivOrdner=ordnerFinden(o,name); S.auswahl.clear(); renderAll(); toast('Unterordner angelegt. Elemente auswählen und mit «Auswahl verschieben nach …» hineinlegen.');
+    const r=await dialog('Neue Lieferung',`<p class="leer">Haus und Geschosse dieser Lieferung, z. B. «Haus A» und «4.–5.OG».</p>`+lieferungFelder(o),{ok:'Anlegen'}); if(!r) return;
+    const lf=lieferungAusFormular(r.data); if(typeof lf==='string'){ toast(lf); return; }
+    S.aktivOrdner=lieferungFinden(o,lf); S.auswahl.clear(); renderAll(); toast('Lieferung angelegt. Jetzt Excel importieren oder Ausführungspläne hochladen.');
   },
   async ordnerUmbenennen(){
     const o=obj(S.aktivObjekt); const x=o&&(o.ordner||[]).find(y=>y.id===S.aktivOrdner); if(!x) return;
-    const r=await dialog('Unterordner umbenennen',`<div class="feld-gitter">${feld('name','Name',x.name,{required:true,voll:true})}</div>`); if(!r) return;
-    const name=String(r.data.name||'').trim(); if(!name) return;
-    patch('objekte',o.id,{ordner:(o.ordner||[]).map(y=>y.id===x.id?{...y,name}:y)}); renderAll(); toast('Unterordner umbenannt');
+    const r=await dialog('Lieferung bearbeiten',lieferungFelder(o,{haus:x.haus!=null?x.haus:x.name,geschosse:x.geschosse||''})); if(!r) return;
+    const lf=lieferungAusFormular(r.data); if(typeof lf==='string'){ toast(lf); return; }
+    const name=lieferName(lf.haus,lf.geschosse);
+    patch('objekte',o.id,{ordner:(o.ordner||[]).map(y=>y.id===x.id?{...y,name,haus:lf.haus,geschosse:lf.geschosse}:y)}); renderAll(); toast('Lieferung gespeichert');
   },
   async ordnerLoeschen(){
     const o=obj(S.aktivObjekt); const x=o&&(o.ordner||[]).find(y=>y.id===S.aktivOrdner); if(!x) return;
     const els=S.elemente.filter(e=>e.objektId===o.id&&e.ordnerId===x.id);
-    const r=await dialog(`Unterordner «${x.name}» löschen?`,`<p>${els.length} Element${els.length===1?'':'e'} in diesem Unterordner.</p>
+    const r=await dialog(`Lieferung «${x.name}» löschen?`,`<p>${els.length} Element${els.length===1?'':'e'} in dieser Lieferung. Ihre Ausführungspläne werden gelöscht.</p>
       <label class="check"><input type="checkbox" name="mit"> Elemente mit Plänen und Fotos ebenfalls löschen</label>
-      <p class="leer">Ohne Häkchen bleiben die Elemente erhalten und landen unter «Ohne Unterordner».</p>`,{ok:'Löschen'}); if(!r) return;
+      <p class="leer">Ohne Häkchen bleiben die Elemente erhalten und landen unter «Ohne Lieferung».</p>`,{ok:'Löschen'}); if(!r) return;
     if(r.data.mit) els.forEach(elementLoeschen); else els.forEach(e=>patch('elemente',e.id,{ordnerId:''}));
+    S.plaene.filter(p=>p.art==='ausfuehrung'&&p.objektId===o.id&&p.ordnerId===x.id).forEach(p=>{ if(p.fileId&&!S.plaene.some(y=>y.id!==p.id&&y.fileId===p.fileId)) delFile(p.fileId); entferne('plaene',p.id); });
     patch('objekte',o.id,{ordner:(o.ordner||[]).filter(y=>y.id!==x.id)});
-    S.aktivOrdner='*'; S.auswahl.clear(); renderAll(); toast('Unterordner gelöscht');
+    S.aktivOrdner='*'; S.auswahl.clear(); renderAll(); toast('Lieferung gelöscht');
   },
   async loeschenAuswahl(){
     const o=obj(S.aktivObjekt); if(!o) return;
@@ -1845,6 +1916,13 @@ function renderScan(code){
   syncStatus();
 }
 
+function ausfScan(e){
+  if(!e.ordnerId) return '';
+  const o=obj(e.objektId)||{}; const et=(o.ordner||[]).find(x=>x.id===e.ordnerId);
+  const liste=S.plaene.filter(p=>p.art==='ausfuehrung'&&p.objektId===e.objektId&&p.ordnerId===e.ordnerId).sort((a,b)=>String(a.name).localeCompare(String(b.name),'de',{numeric:true}));
+  if(!liste.length) return '';
+  return `<h3 class="sc-h3">Ausführungspläne${et&&et.name?' · '+h(et.name):''}</h3>`+liste.map(p=>`<div class="pk klein" data-pk="${p.id}"></div>`).join('');
+}
 function renderScanElement(e){
   revokeUrls();
   const o=obj(e.objektId)||{}; const mp=plan(e.montagePlanId), dp=plan(e.detailPlanId);
@@ -1861,7 +1939,7 @@ function renderScanElement(e){
       ${zeile('Objekt',o.name)}${zeile('Kunde',o.kunde)}${zeile('Adresse',[o.strasse,o.plzOrt].filter(Boolean).join(', '))}
       ${zeile('Geschoss',e.geschoss)}${zeile('Lieferdatum',fmt(lief(e)))}${zeile('Auftrag',e.auftragNr||o.auftragNr)}
     </dl>
-    <section class="sc-block"><h2>Pläne</h2><div id="pkMontage"></div><div id="pkDetail"></div></section>
+    <section class="sc-block"><h2>Pläne</h2><div id="pkMontage"></div><div id="pkDetail"></div>${ausfScan(e)}</section>
     <section class="sc-block"><h2>Montage</h2>
       <div class="sc-stapel">
         <label class="feld"><span>Monteur</span><input id="monteurName" value="${h(LS.get('monteurName','')||'')}" placeholder="Vor- und Nachname" autocomplete="name"></label>
@@ -1902,7 +1980,7 @@ function pkZeichnen(id){
   $$(`[data-pk="${id}"]`).forEach(el=>{
     if(!p){ el.innerHTML=''; return; }
     const titel=el.dataset.pkTitel;
-    const kopf=`<div class="pk-text"><strong>${titel?h(titel):h(p.name)}</strong><span>${titel?h(p.name):(ARTEN[p.art]||'Plan')}${p.size?', '+kb(p.size):''}</span>`;
+    const kopf=`<div class="pk-text"><strong>${titel?h(titel):h(p.name)}</strong><span>${titel?h(p.name):(p.art==='ausfuehrung'?'Ausführungsplan':ARTEN[p.art]||'Plan')}${p.size?', '+kb(p.size):''}</span>`;
     if(!p.fileId){
       el.innerHTML=kopf+`</div>`+(p.url?`<div class="pk-akt"><a class="btn primary" href="${h(p.url)}" target="_blank" rel="noopener">PDF öffnen</a></div>`:'');
       return;
@@ -2247,9 +2325,15 @@ function scanUebernehmen(d){
     ids[art]=id;
   }
   const oid=d.element.objektId||'scanobjekt';
-  upsert(S.objekte,{...d.objekt,id:oid});
+  const lief=d.lieferung&&d.element.ordnerId?[{id:d.element.ordnerId,name:d.lieferung.name}]:[];
+  upsert(S.objekte,{...d.objekt,id:oid,ordner:lief});
+  for(const p of (d.lieferung&&d.lieferung.plaene)||[]){
+    const id='scanausf:'+p.id;
+    upsert(S.plaene,{id,art:'ausfuehrung',objektId:oid,ordnerId:d.element.ordnerId,name:p.name,size:p.size,url:p.url||'',fileId:p.datei?`scan:ausfuehrung:${SCAN.k}:${p.size||0}:${p.id}`:'',fertig:!p.datei||p.bereit});
+    ids['ausf:'+p.id]=id;
+  }
   upsert(S.elemente,{...elemVorgabe(),...d.element,objektId:oid,montagePlanId:ids.montage||'',detailPlanId:ids.detail||''});
-  S.plaene.filter(p=>p.id.startsWith('scanplan:')&&!Object.values(ids).includes(p.id)).forEach(p=>{ S.plaene=S.plaene.filter(x=>x!==p); });
+  S.plaene.filter(p=>(p.id.startsWith('scanplan:')||p.id.startsWith('scanausf:'))&&!Object.values(ids).includes(p.id)).forEach(p=>{ S.plaene=S.plaene.filter(x=>x!==p); });
 }
 function scanMeldung(status){
   S.scanElement=null;
@@ -2545,11 +2629,20 @@ document.addEventListener('change',async ev=>{
     const f=t.files[0]; t.value=''; const [eid,art]=t.dataset.pzFile.split('|');
     const r=await elementPlanSetzen(eid,art,f);
     if(r){ renderAll(); toast(`${ARTEN[art]} wird hochgeladen`); r.done.then(()=>toast(`${ARTEN[art]} gespeichert`),()=>{}); }
+  }else if(t.matches('[data-ausf-upload]')){
+    const files=[...t.files]; t.value=''; ausfHochladen(t.dataset.ausfUpload,files);
+  }else if(t.matches('[data-einhaus]')||t.matches('[data-liefwahl]')){
+    liefAnpassen(t.form);
+  }else if(t.matches('#dlg select[name=ziel]')&&t.form.querySelector('[data-liefwahl]')){
+    const o=t.value==='__auto'?null:obj(t.value);
+    t.form.querySelector('[data-liefwahl]').innerHTML=liefOptionen(o,'');
+    const dl=t.form.querySelector('#hausVorschlaege'); if(dl) dl.innerHTML=[...new Set((o&&o.ordner||[]).map(x=>x.haus).filter(Boolean))].map(n=>`<option value="${h(n)}">`).join('');
+    liefAnpassen(t.form);
   }else if(t.matches('[data-verschieben]')){
     const o=obj(S.aktivObjekt); let ziel=t.value; t.value=''; if(!o||!ziel) return;
     if(ziel==='__neu'){
-      const r=await dialog('Neuer Unterordner',`<div class="feld-gitter">${feld('name','Name','',{required:true,ph:'z. B. Haus A',voll:true})}</div>`,{ok:'Anlegen und verschieben'}); if(!r) return;
-      const name=String(r.data.name||'').trim(); if(!name) return; ziel=ordnerFinden(o,name);
+      const r=await dialog('Neue Lieferung',lieferungFelder(o),{ok:'Anlegen und verschieben'}); if(!r) return;
+      const lf=lieferungAusFormular(r.data); if(typeof lf==='string'){ toast(lf); return; } ziel=lieferungFinden(o,lf);
     }
     const ids=[...S.auswahl].filter(id=>elem(id)&&elem(id).objektId===o.id);
     ids.forEach(id=>patch('elemente',id,{ordnerId:ziel==='-'?'':ziel}));
