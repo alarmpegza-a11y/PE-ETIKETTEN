@@ -22,6 +22,8 @@ Live (alle IT-Vorgaben ausser privatem Repo):
 - Datensicherung vom 19.11.2026 in `Sicherung/` (nicht im Repo).
 - **QR-Adresse = Cloudflare, nicht GitHub:** `settings.baseUrl` = `https://pe-etiketten-api.alarm-pe-gza.workers.dev/`. Der Worker leitet `/` mit 302 zu `APP_URL` (wrangler.toml) weiter, der Browser behält `#k=…`. **Notfall GitHub-Ausfall:** App an anderem Ort bereitstellen (z. B. Cloudflare Pages, gratis), `APP_URL` und `ALLOWED_ORIGINS` in `worker/wrangler.toml` anpassen, `deploy.ps1`. Gedruckte Etiketten bleiben gültig. Bei neuer App-Adresse auch die Firebase-API-Key-Einschränkung und Firebase «Autorisierte Domains» ergänzen.
 
+- **Lieferungen:** `objekte.ordner=[{id,name,haus,geschosse,ausfuehrung:[planId]}]`, Elemente tragen `ordnerId`. Eröffnung und jeder Import verlangen eine Lieferung (Haus + Geschosse, «Nur ein Haus»); Import schlägt immer «Neue Lieferung» vor. Ausführungspläne (`art:'ausfuehrung'`) pro Lieferung; der Worker (`/api/scan`) liefert `lieferung.plaene` nur der eigenen Lieferung.
+
 Tests im Browser: `node test/dev-server.mjs` (Firebase inkl. Regeln und Dropbox nachgebildet, echter Worker-Code, nie der echte Worker). Testkonto `buero@test.ch` / `test1234`, Test-PIN `123456`.
 
 Offen: Repos privat (GitHub Pro) zurückgestellt; Enventa-Druckformular mit QR (Kapitel 10, braucht jetzt den `#k=`-Link, nicht die Barcode-Nummer).
