@@ -2235,19 +2235,22 @@ function scanAbhaengige(e,key){
 let AUTH_BEREIT=false, anonLaeuft=false;
 function rolleMerken(){ if(USER&&ROLLE) LS.set('rolle',{uid:USER.uid,rolle:ROLLE}); }
 async function rolleLaden(user){
-  const gemerkt=(()=>{ const m=LS.get('rolle'); return m&&m.uid===user.uid?m.rolle:null; })();
+  // Gemerkt wird nur, was Server oder PIN bestätigt haben. Ein anonymes Gerät gilt nie aus dem Speicher als «Büro».
+  const gemerkt=(()=>{ const m=LS.get('rolle'); const r=m&&m.uid===user.uid?m.rolle:null; return user.isAnonymous&&r==='buero'?null:r; })();
+  let merken=true;
   try{
     const d=await getDoc(ref('rollen',user.uid));
     const r=d.exists()?d.data().rolle:null;
     ROLLE=['buero','monteur'].includes(r)?r:'extern'; REGELN_ALT=false;
   }catch(err){
+    merken=false;
     if(err.code==='permission-denied'){
       // Alte, offene Firestore-Regeln: Verhalten wie bisher. Mit Worker zählt für Fotos der PIN.
       REGELN_ALT=true;
-      ROLLE=!user.isAnonymous?'buero':DROPBOX?(gemerkt||'extern'):'buero';
+      ROLLE=!user.isAnonymous?'buero':DROPBOX?(gemerkt==='monteur'?'monteur':'extern'):'buero';
     }else{ console.warn('Rolle nicht ladbar',err); ROLLE=gemerkt||(user.isAnonymous?'extern':'buero'); }
   }
-  rolleMerken();
+  if(merken) rolleMerken();
 }
 function anonymAnmelden(){
   if(anonLaeuft||USER||!AUTH) return; anonLaeuft=true;
