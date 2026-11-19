@@ -238,11 +238,15 @@ async function scanLesen(request, env, z) {
   const ausfIds = (et && et.ausfuehrung || []).filter(x => SCHLUESSEL_ID_RE.test(x || '')).slice(0, 60);
   const ausf = (await Promise.all(ausfIds.map(id => fsGet(env, 'plaene', id))))
     .map((p, i) => p && p.art === 'ausfuehrung' && p.objektId === el.objektId ? { id: ausfIds[i], ...planInfo(p) } : null).filter(Boolean);
+  // Weitere Detailpläne (z. B. Teildetails B7.A.1, B7.A.2 zum Badtyp B7.A)
+  const wIds = (el.detailWeitere || []).filter(x => SCHLUESSEL_ID_RE.test(x || '')).slice(0, 40);
+  const weitere = (await Promise.all(wIds.map(id => fsGet(env, 'plaene', id))))
+    .map((p, i) => p && p.art === 'detail' && p.objektId === el.objektId ? { id: wIds[i], ...planInfo(p) } : null).filter(Boolean);
   return json({
     element: { id: z.id, ...nur(el, ['pos', 'bezeichnung', 'gewerk', 'geschoss', 'lieferdatum', 'auftragNr', 'barcode', 'status', 'montiert', 'objektId', 'ordnerId']),
       fotos: (el.fotos || []).filter(f => f && f.id).map(f => nur(f, ['id', 'ts', 'von'])) },
     objekt: nur(obj, ['name', 'kunde', 'strasse', 'plzOrt', 'auftragNr', 'lieferdatum']),
-    plaene: { montage: planInfo(mp), detail: planInfo(dp) },
+    plaene: { montage: planInfo(mp), detail: planInfo(dp), weitere },
     logo: set && set.logo ? set.logo : '',
     lieferung: et ? { name: et.name || '', plaene: ausf } : null,
     monteur: await istMonteur(request, env)
@@ -252,7 +256,13 @@ async function scanLesen(request, env, z) {
 async function scanDatei(env, ctx, z, q) {
   let fileId = '', name = '';
   const art = q.get('art'), foto = q.get('foto');
-  if (art === 'montage' || art === 'detail') {
+  if (art === 'detail' && q.get('id')) {
+    const id = q.get('id');
+    if (!SCHLUESSEL_ID_RE.test(id) || !(z.el.detailWeitere || []).includes(id)) throw new HttpError(404, 'plan-fehlt', 'Kein Plan');
+    const p = await fsGet(env, 'plaene', id);
+    if (!p || p.art !== 'detail' || p.objektId !== z.el.objektId || !p.fileId) throw new HttpError(404, 'plan-fehlt', 'Kein Plan');
+    fileId = p.fileId; name = p.name || 'Detailplan.pdf';
+  } else if (art === 'montage' || art === 'detail') {
     const pid = z.el[art + 'PlanId'];
     const p = pid ? await fsGet(env, 'plaene', pid) : null;
     if (!p || !p.fileId) throw new HttpError(404, 'plan-fehlt', 'Kein Plan');
