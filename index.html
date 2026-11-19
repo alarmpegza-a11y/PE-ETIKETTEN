@@ -1774,15 +1774,30 @@ async function planLoeschen(p){
 }
 
 /* ---------- Druck ---------- */
-function drucken(els,einmal=false){
+// Kopf- und Fusszeilen (Datum, Titel, Adresse, Seitenzahl) setzt der Browser, nicht die Seite.
+// Einmal pro PC im Druckfenster abschalten; der Hinweis erscheint, bis das bestätigt ist.
+async function druckHinweis(){
+  if(LS.get('druckHinweisOk')) return true;
+  const r=await dialog('Vor dem ersten Druck auf diesem PC',`<p>Damit auf der Etikette <b>kein Datum, keine Adresse und keine Seitenzahl</b> erscheinen, im Druckfenster einmal einstellen:</p>
+    <ol><li>Links auf <b>«Weitere Einstellungen»</b> klicken</li><li>Häkchen bei <b>«Kopf- und Fusszeilen»</b> entfernen</li><li><b>«Ränder»</b> auf <b>«Keine»</b> stellen</li></ol>
+    <p class="leer">Der Browser merkt sich das. Danach erscheint dieser Hinweis nicht mehr.</p>
+    <label class="check"><input type="checkbox" name="ok"> Erledigt, nicht mehr anzeigen</label>`,{ok:'Weiter zum Drucken'});
+  if(!r) return false;
+  if(r.data.ok) LS.set('druckHinweisOk',true);
+  return true;
+}
+let titelVorDruck=null;
+window.addEventListener('beforeprint',()=>{ if($('#print-area').innerHTML){ titelVorDruck=document.title; document.title=' '; } });
+async function drucken(els,einmal=false){
   if(!els.length){ toast('Keine Etiketten ausgewählt'); return; }
+  if(!await druckHinweis()) return;
   els.forEach(sichereZugang); qrCache.clear();
   // Jede Etikette so oft wie bei «Anzahl» eingestellt (Testdruck: einmal)
   const a=$('#print-area'); a.innerHTML=els.map(e=>{ const l=labelHTML(e); return einmal?l:l.repeat(anz(e)); }).join('');
   const imgs=$$('img',a);
   Promise.all(imgs.map(i=>i.complete?1:new Promise(r=>{ i.onload=i.onerror=r; }))).then(()=>setTimeout(()=>window.print(),60));
 }
-window.addEventListener('afterprint',()=>{ $('#print-area').innerHTML=''; });
+window.addEventListener('afterprint',()=>{ $('#print-area').innerHTML=''; if(titelVorDruck!=null){ document.title=titelVorDruck; titelVorDruck=null; } });
 
 /* ---------- Monteur-Ansicht ---------- */
 const syncBadge=()=>`<span class="sync"></span>`;
