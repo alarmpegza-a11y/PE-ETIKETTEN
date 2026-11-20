@@ -863,7 +863,7 @@ function alterSchluessel(id){
 function sichereZugang(e){ if(e&&!e.zugang&&istBuero()&&zugaengeStand) patch('elemente',e.id,{zugang:alterSchluessel(e.id)||neuerSchluessel()}); return e; }
 function starteZugaenge(){
   if(lisZugaenge||!istBuero()||REGELN_ALT) return;
-  lisZugaenge=onSnapshot(collection(fs,'zugaenge'),snap=>{ if(snap.metadata.fromCache) return; zugaengeStand=new Map(snap.docs.map(d=>[d.id,{id:d.data().elementId,t:Number(d.data().t)||0}])); zugaengePflegen(); },err=>console.warn('Zugänge nicht ladbar',err));
+  lisZugaenge=onSnapshot(collection(fs,'zugaenge'),{includeMetadataChanges:true},snap=>{ if(snap.metadata.fromCache) return; zugaengeStand=new Map(snap.docs.map(d=>[d.id,{id:d.data().elementId,t:Number(d.data().t)||0}])); zugaengePflegen(); },err=>console.warn('Zugänge nicht ladbar',err));
 }
 /* Gedruckte Etiketten bleiben gültig, auch wenn ein Auftrag gelöscht und neu importiert wird:
    Der Schlüssel eines gelöschten Elements bleibt (innerhalb der Aufbewahrungsfrist) in zugaenge stehen.
