@@ -193,12 +193,13 @@ test('Scan: falscher, zu kurzer oder fehlender Schlüssel abgewiesen', async () 
   assert.equal((await scan('?k=' + K)).status, 404);
 });
 
-test('Scan: nach Ablauf der Aufbewahrung gesperrt (Standard 28 Tage, Behalten verlängert)', async () => {
-  scanDaten({ alterTage: 27 }); assert.equal((await scan('?k=' + K)).status, 200);
-  scanDaten({ alterTage: 29 }); assert.equal((await scan('?k=' + K)).status, 410);
+test('Scan: nach Ablauf der Aufbewahrung gesperrt (Standard 56 Tage, Behalten verlängert)', async () => {
+  scanDaten({ alterTage: 55 }); assert.equal((await scan('?k=' + K)).status, 200);
+  scanDaten({ alterTage: 57 }); assert.equal((await scan('?k=' + K)).status, 410);
   assert.equal((await scan('/datei?k=' + K + '&art=montage')).status, 410, 'auch Pläne gesperrt');
-  scanDaten({ alterTage: 29, behaltenBis: Date.now() + 5 * TAG }); assert.equal((await scan('?k=' + K)).status, 200);
-  scanDaten({ alterTage: 29, tage: 60 }); assert.equal((await scan('?k=' + K)).status, 200, 'Einstellung 60 Tage');
+  scanDaten({ alterTage: 57, behaltenBis: Date.now() + 5 * TAG }); assert.equal((await scan('?k=' + K)).status, 200);
+  scanDaten({ alterTage: 57, tage: 60 }); assert.equal((await scan('?k=' + K)).status, 200, 'Einstellung 60 Tage');
+  scanDaten({ alterTage: 29, tage: 28 }); assert.equal((await scan('?k=' + K)).status, 410, 'Einstellung 28 Tage');
   scanDaten({ alterTage: 400, tage: 0 }); assert.equal((await scan('?k=' + K)).status, 200, '0 = nie');
 });
 
@@ -267,7 +268,8 @@ test('me liefert Rolle (nur Büro oder extern)', async () => {
 test('Hilfsfunktionen', () => {
   assert.equal(__test.headerJson({ path: '/ä' }), '{"path":"/' + '\\' + 'u00e4"}');
   assert.equal(__test.dateiPfad('plaene/a_26-0412.X/p1.pdf').dbx, '/plaene/a_26-0412.X/p1.pdf');
-  assert.equal(__test.abgelaufen({ created: Date.now() - 30 * TAG }, {}), true);
+  assert.equal(__test.abgelaufen({ created: Date.now() - 60 * TAG }, {}), true);
+  assert.equal(__test.abgelaufen({ created: Date.now() - 30 * TAG }, {}), false, "8 Wochen Standard");
   assert.equal(__test.abgelaufen({ created: Date.now() - 3 * TAG }, {}), false);
 });
 

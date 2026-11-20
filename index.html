@@ -1048,8 +1048,9 @@ function objektPasst(o){
 /* ---------- Aufbewahrung: Objekte werden X Monate nach dem Anlegen automatisch gelöscht ----------
    Standard 3 Monate (Einstellungen, 0 = nie). «Behalten» verschiebt die Frist (behaltenBis).
    Gelöscht wird nur in der Büro-Ansicht und erst, wenn alle Daten frisch vom Server da sind (nicht aus dem Offline-Cache). */
-// Aufträge sind 28 Tage ab dem Anlegen bzw. Import online (Einstellungen, 0 = nie). Danach sperrt auch der Worker den QR-Code.
-const aufbewahrTage=()=>{ const n=parseInt(S.settings.aufbewahrungTage,10); return isFinite(n)&&n>=0?n:28; };
+// Aufträge sind 56 Tage (8 Wochen) ab dem Anlegen bzw. Import online (Einstellungen, 0 = nie). Danach sperrt auch der Worker den QR-Code.
+const AUFBEWAHRUNG_STANDARD=56;
+const aufbewahrTage=()=>{ const n=parseInt(S.settings.aufbewahrungTage,10); return isFinite(n)&&n>=0?n:AUFBEWAHRUNG_STANDARD; };
 function loeschDatum(o){
   if(o.behaltenBis) return o.behaltenBis;
   const t=aufbewahrTage(); if(!t||!o.created) return null;
@@ -1069,6 +1070,8 @@ function pruefeAufbewahrung(){
   if(document.body.classList.contains('modus-scan')||document.body.classList.contains('modus-prod')) return;
   if(!['objekte','elemente','plaene','settings'].every(k=>meta[k]&&!meta[k].fromCache)) return;
   aufbewahrungGeprueft=true;
+  // Einmalig: früher gespeicherte 28 Tage auf 8 Wochen anheben, bevor gelöscht wird
+  if(!S.settings.aufbewahrung8w){ const alt=parseInt(S.settings.aufbewahrungTage,10); saveSettings(alt===28||!isFinite(alt)?{aufbewahrungTage:AUFBEWAHRUNG_STANDARD,aufbewahrung8w:true}:{aufbewahrung8w:true}); }
   enventaBereinigen();
   const alt=S.objekte.filter(o=>{ const d=loeschDatum(o); return d!=null&&d<Date.now(); });
   if(!alt.length) return;
@@ -1150,7 +1153,7 @@ function renderObjekt(){
         <div><dt>Adresse</dt><dd>${[o.strasse,o.plzOrt].filter(Boolean).map(h).join(', ')||'–'}</dd></div>
         <div><dt>Auftrag</dt><dd>${h(o.auftragNr)||'–'}</dd></div>
         <div><dt>Lieferdatum</dt><dd>${fmt(o.lieferdatum)}</dd></div>
-        ${loeschDatum(o)!=null?`<div><dt>Automatisch gelöscht am</dt><dd class="frist${restTage(o)<=14?' bald':''}">${fmtDatum(loeschDatum(o))} <button class="btn sm" data-act="objektBehalten" title="Frist um ${aufbewahrTage()||28} Tage verlängern">Behalten</button></dd></div>`:''}
+        ${loeschDatum(o)!=null?`<div><dt>Automatisch gelöscht am</dt><dd class="frist${restTage(o)<=14?' bald':''}">${fmtDatum(loeschDatum(o))} <button class="btn sm" data-act="objektBehalten" title="Frist um ${aufbewahrTage()||AUFBEWAHRUNG_STANDARD} Tage verlängern">Behalten</button></dd></div>`:''}
       </dl></div>
       <div class="block-aktionen">
         ${ordAkt?`<button class="btn" data-act="ordnerUmbenennen">Lieferung bearbeiten</button><button class="btn danger" data-act="ordnerLoeschen">Lieferung löschen</button>`:''}
@@ -1829,7 +1832,7 @@ const ACT={
     await montageExport(dir);
   },
   objektBehalten(){
-    const o=obj(S.aktivObjekt); if(!o) return; const t=aufbewahrTage()||28;
+    const o=obj(S.aktivObjekt); if(!o) return; const t=aufbewahrTage()||AUFBEWAHRUNG_STANDARD;
     const bis=Math.max(Date.now(),loeschDatum(o)||Date.now())+t*864e5;
     patch('objekte',o.id,{behaltenBis:bis}); renderAll(); toast(`Objekt bleibt bis ${fmtDatum(bis)}`);
   },
@@ -1899,7 +1902,7 @@ const ACT={
     const r=await dialog('Einstellungen',body); if(!r) return;
     const url=String(r.data.baseUrl||'').trim().split('#')[0];
     const f={baseUrl:url||''}; if(!DROPBOX) f.speicher=r.data.speicherStorage?'storage':'firestore';
-    const tg=parseInt(r.data.aufbewahrungTage,10); f.aufbewahrungTage=isFinite(tg)&&tg>=0?tg:28;
+    const tg=parseInt(r.data.aufbewahrungTage,10); f.aufbewahrungTage=isFinite(tg)&&tg>=0?tg:AUFBEWAHRUNG_STANDARD;
     const lf=r.form.querySelector('[name=logoFile]').files[0];
     if(r.data.logoReset) f.logo='';
     else if(lf){ if(lf.size>600*1024){ toast('Logo ist zu gross (max. 600 KB)'); } else f.logo=await fileToDataUrl(lf); }
@@ -2442,7 +2445,7 @@ async function pdZeigen(eingabe){
 /* ---------- Baustelle: Scan über den Worker mit dem Etiketten-Schlüssel ----------
    Kein Datenbankzugriff vom Handy und keine Anmeldung. Der QR-Code enthält einen zufälligen Schlüssel (#k=…);
    der Worker liefert genau dieses Element mit Objekt, zwei Plänen und Fotos. Nach Ablauf der Aufbewahrung
-   (28 Tage) sperrt der Worker den Schlüssel. Schreiben (montiert, Fotos) nur mit Monteur-Sitzung nach PIN. */
+   (56 Tage) sperrt der Worker den Schlüssel. Schreiben (montiert, Fotos) nur mit Monteur-Sitzung nach PIN. */
 const SCAN={key:null,id:null,status:'leer',k:null,daten:null,fehler:null};
 function scanStopp(){ Object.assign(SCAN,{key:null,id:null,status:'leer',k:null,daten:null,fehler:null}); }
 const monteurSitzung=()=>String(LS.get('monteurSitzung','')||'');
@@ -2504,7 +2507,7 @@ function scanUebernehmen(d){
 function scanMeldung(status){
   S.scanElement=null;
   const t={
-    abgelaufen:['QR-Code abgelaufen','Dieser Auftrag ist nicht mehr online. Aufträge sind 4 Wochen ab Eröffnung abrufbar. Bitte im Büro nachfragen.'],
+    abgelaufen:['QR-Code abgelaufen','Dieser Auftrag ist nicht mehr online. Aufträge sind 8 Wochen ab Eröffnung abrufbar. Bitte im Büro nachfragen.'],
     fehlt:['Etikette unbekannt','Diese Etikette ist nicht (mehr) im System. Bitte im Büro nachfragen.'],
     fehler:['Keine Verbindung','Die Daten konnten nicht geladen werden. Bitte Internetverbindung prüfen.']
   }[status]||['Fehler','Bitte erneut scannen.'];

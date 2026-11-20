@@ -209,13 +209,13 @@ async function zugang(env, k) {
   if (!z || !z.elementId) throw new HttpError(404, 'etikette-unbekannt', 'Etikette unbekannt');
   const el = await fsGet(env, 'elemente', z.elementId);
   if (!el || el.zugang !== k) throw new HttpError(404, 'etikette-unbekannt', 'Etikette unbekannt');
-  // Aufbewahrung: Nach Ablauf (Standard 28 Tage ab Anlegen, «Behalten» verlängert) ist der QR-Code gesperrt,
+  // Aufbewahrung: Nach Ablauf (Standard 56 Tage = 8 Wochen ab Anlegen, «Behalten» verlängert) ist der QR-Code gesperrt,
   // auch wenn das Büro die Daten noch nicht gelöscht hat.
   const [obj, set] = await Promise.all([el.objektId ? fsGet(env, 'objekte', el.objektId) : null, fsGet(env, 'settings', 'app')]);
   if (abgelaufen(obj, set)) throw new HttpError(410, 'abgelaufen', 'Dieser QR-Code ist abgelaufen');
   return { k, el, id: z.elementId, obj, set };
 }
-export function aufbewahrTage(set) { const n = parseInt(set && set.aufbewahrungTage, 10); return Number.isFinite(n) && n >= 0 ? n : 28; }
+export function aufbewahrTage(set) { const n = parseInt(set && set.aufbewahrungTage, 10); return Number.isFinite(n) && n >= 0 ? n : 56; }
 export function abgelaufen(obj, set, jetzt = Date.now()) {
   if (!obj) return false;
   const bis = obj.behaltenBis ? Number(obj.behaltenBis) : (aufbewahrTage(set) && obj.created ? Number(obj.created) + aufbewahrTage(set) * 864e5 : null);

@@ -45,7 +45,7 @@ Baustelle (Handy, OHNE Anmeldung)
 
 - **Firestore-Regeln** (`firestore.rules` im Repo): Lesen/Schreiben nur mit Rolle `buero` und nicht anonym. Rollen können nur über die Konsole gesetzt werden.
 - **QR-Schlüssel:** zufällig (22 Zeichen, ca. 130 Bit), nicht aus Auftrags- oder Barcode-Nummern ableitbar. Der Worker liefert ausschliesslich das zugehörige Element, ohne interne Felder.
-- **Aufbewahrung:** Aufträge sind **28 Tage** ab Eröffnung/Import online (einstellbar, «Behalten» verlängert). Danach sperrt der Worker den QR-Code sofort; das Büro löscht Auftrag, Elemente, Pläne, Fotos und die Dropbox-Dateien automatisch.
+- **Aufbewahrung:** Aufträge sind **56 Tage (8 Wochen)** ab Eröffnung/Import online (einstellbar, «Behalten» verlängert). Danach sperrt der Worker den QR-Code sofort; das Büro löscht Auftrag, Elemente, Pläne, Fotos und die Dropbox-Dateien automatisch.
 - **Schlüssel/Secrets** liegen nur als Cloudflare-Secrets: Dropbox-App-Key/-Secret/Refresh-Token, Firebase-Service-Konto, Monteur-PIN. Nicht im Code, nicht im Repo, nicht im Browser.
 - **Firebase-Web-API-Key:** öffentlich (bei Firebase üblich), eingeschränkt auf die Websites `alarmpegza-a11y.github.io` und `etikette-fa8d1.firebaseapp.com` sowie die Firebase-Dienste.
 - **Dropbox:** Zugriffstyp App-Ordner, Firmenkonto, Token nur serverseitig; Dateien werden nie überschrieben, gelöschte Dateien sind in Dropbox wiederherstellbar.
