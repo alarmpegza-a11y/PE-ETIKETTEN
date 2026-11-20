@@ -1197,7 +1197,7 @@ function renderObjekt(){
         <span class="plan-akt"><button class="btn sm ghost" data-plan-dl="${p.id}">Herunterladen</button><button class="btn sm ghost danger" data-plan-del="${p.id}">Entfernen</button></span></li>`).join('')}</ul></div>`:'<p class="leer">Noch keine Ausführungspläne für diese Lieferung.</p>'):''}
     </section>
     <section class="block">
-      <div class="block-kopf"><div><h2>Viele Pläne auf einmal</h2><p>Einfach <b>alle</b> PDFs markieren, auch ältere Versionen und Pläne, die nicht gebraucht werden. Das Tool erkennt den <b>Badtyp</b> im Dateinamen (z. B. «… Bad Typ B6.G.pdf») und gibt den Plan allen Elementen mit diesem Badtyp, nimmt pro Plan nur die neueste Version und lässt nicht benötigte weg. Teildetails (B7.A.1, B7.A.2) kommen als weitere Detailpläne dazu. Dateien mit Betriebsauftrag oder Bezeichnung im Namen werden ebenfalls erkannt. Du prüfst und bestätigst.</p></div></div>
+      <div class="block-kopf"><div><h2>Viele Pläne auf einmal</h2><p>Einfach <b>alle</b> PDFs markieren, auch ältere Versionen und Pläne, die nicht gebraucht werden. Das Tool erkennt den <b>Badtyp</b> im Dateinamen (z. B. «… Bad Typ B6.G.pdf») und gibt den Plan allen Elementen mit diesem Badtyp, nimmt pro Plan nur die neueste Version und lässt nicht benötigte weg. Teildetails (B7.A.1, B7.A.2) kommen als weitere Detailpläne dazu. Dateien mit Betriebsauftrag oder Bezeichnung im Namen werden ebenfalls erkannt. Bei <b>Produktionsplänen</b> schreibt das Tool die <b>Holzliste</b> (Anzahl, Länge, Breite) automatisch rechts auf jede Seite und am Schluss eine Gesamtliste. Du prüfst und bestätigst.</p></div></div>
       <div class="plan-upload">${Object.entries(MEHRZAHL).map(([art,t])=>`<label class="btn">${t} hochladen<input type="file" accept="application/pdf,.pdf" multiple hidden data-upload="${art}"></label>`).join('')}</div>
       ${nPlaene?`<details class="plan-alle"><summary>Alle Pläne dieses Auftrags anzeigen (${nPlaene})</summary>
         <div class="plan-spalten">${Object.entries(MEHRZAHL).map(([art,t])=>planSpalte(art,t,von(art))).join('')}</div></details>`:''}
@@ -1314,13 +1314,17 @@ async function fingerabdruck(buf){
 }
 async function planHochladen(file,art,objektId,buf){
   const id=uid(); const hash=await fingerabdruck(buf);
-  const gleich=hash&&S.plaene.find(x=>x.hash===hash&&x.fileId&&x.fertig!==false);
+  // Produktionspläne nur wiederverwenden, wenn sie schon auf die Holzliste geprüft wurden
+  const gleich=hash&&S.plaene.find(x=>x.hash===hash&&x.fileId&&x.fertig!==false&&(art!=='produktion'||x.holzGeprueft));
   if(gleich){
-    savePlan({id,objektId,art,name:file.name,fileId:gleich.fileId,hash,url:'',size:file.size,created:Date.now(),fertig:true});
+    savePlan({id,objektId,art,name:file.name,fileId:gleich.fileId,hash,url:'',size:gleich.size||file.size,created:Date.now(),fertig:true,...(gleich.holz?{holz:gleich.holz}:{}),...(gleich.holzGeprueft?{holzGeprueft:true}:{})});
     return {planId:id,done:Promise.resolve()};
   }
+  // Produktionsplan: Holzliste (Anzahl, Länge, Breite) automatisch auf den Plan schreiben
+  let holz=null;
+  if(art==='produktion'){ holz=await holzlisteEintragen(buf); if(holz){ buf=holz.buf; toast(`Holzliste eingetragen: ${holz.stuecke} Hölzer${holz.offen?`, ${holz.offen} Mass${holz.offen>1?'e':''} bitte prüfen`:''} (${file.name})`); } }
   const r=putFile(`plaene/${objektId}/${id}.pdf`,file.name,'application/pdf',buf);
-  const p={id,objektId,art,name:file.name,fileId:r.id,hash,url:'',size:file.size,created:Date.now(),fertig:false};
+  const p={id,objektId,art,name:file.name,fileId:r.id,hash,url:'',size:buf.byteLength,created:Date.now(),fertig:false,...(holz?{holz:{stueck:holz.stuecke,offen:holz.offen}}:{}),...(art==='produktion'?{holzGeprueft:true}:{})};
   savePlan(p); r.done.then(()=>patch('plaene',p.id,{fertig:true}),()=>{});
   return {planId:p.id,done:r.done};
 }
@@ -1418,6 +1422,102 @@ async function pdfText(file){
     let t=''; for(let i=1;i<=Math.min(d.numPages,3);i++){ const c=await (await d.getPage(i)).getTextContent(); t+=' '+c.items.map(x=>x.str).join(' '); }
     d.destroy(); return t;
   }catch(err){ console.warn('PDF-Text nicht lesbar',file.name,err); return ''; }
+}
+/* ---------- Holzliste in Produktionsplänen ----------
+   In den CAD-Plänen trägt jedes Holz (beige Fläche) zwei kleine Masse als Text: waagrecht («4 0 . 0») und
+   senkrecht («1 4 . 0»), Schrifthöhe ca. 11 pt. Die Elementmasse sind grösser (17 pt) und werden ignoriert.
+   Pro Seite werden die Masspaare zugeordnet (geometrisch: der senkrechte Text liegt innerhalb der Breite des
+   waagrechten und umgekehrt) und als Liste rechts neben den Plan geschrieben, dazu eine Gesamtliste am Schluss. */
+let pdfLibLaden=null;
+function pdfLib(){
+  if(window.PDFLib) return Promise.resolve(window.PDFLib);
+  if(!pdfLibLaden) pdfLibLaden=new Promise((res,rej)=>{
+    const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+    s.onload=()=>res(window.PDFLib); s.onerror=()=>{ pdfLibLaden=null; rej(new Error('pdf-lib nicht ladbar')); };
+    document.head.appendChild(s);
+  });
+  return pdfLibLaden;
+}
+const HOLZ_MARKE='PE-Holzliste';
+async function holzSeite(page){
+  const t=await page.getTextContent(); const H=[],V=[];
+  for(const i of t.items){
+    const s=i.str.replace(/\s+/g,''); if(!/^\d{1,3}\.\d$/.test(s)) continue;
+    const a=i.transform; const h=Math.hypot(a[2],a[3]); if(h<9.5||h>12.5) continue;
+    const rot=Math.round(Math.atan2(a[1],a[0])*180/Math.PI); const x=a[4],y=a[5],w=i.width;
+    if(rot===0) H.push({v:parseFloat(s),cx:x+w/2,cy:y+h/2});
+    else if(Math.abs(rot)===90) V.push({v:parseFloat(s),cx:rot===90?x-h/2:x+h/2,cy:rot===90?y+w/2:y-w/2});
+  }
+  // Benötigter Massstab (pt pro cm), damit beide Texte im selben Rechteck liegen: je kleiner, desto sicherer
+  const kand=[]; H.forEach((a,i)=>V.forEach((b,j)=>kand.push({i,j,s:Math.max(2*Math.abs(a.cx-b.cx)/a.v,2*Math.abs(a.cy-b.cy)/b.v)}))); kand.sort((a,b)=>a.s-b.s);
+  const hu=new Set(),vu=new Set(),teile=[];
+  for(const k of kand){ if(hu.has(k.i)||vu.has(k.j)||k.s>4.5) continue; hu.add(k.i); vu.add(k.j); const a=H[k.i].v,b=V[k.j].v; teile.push({l:Math.max(a,b),b:Math.min(a,b)}); }
+  const offen=[...H.filter((_,i)=>!hu.has(i)),...V.filter((_,j)=>!vu.has(j))].map(x=>x.v);
+  return {teile,offen};
+}
+function holzGruppen(teile){
+  const m=new Map(); for(const t of teile){ const k=t.l+'x'+t.b; m.set(k,{l:t.l,b:t.b,n:(m.get(k)?.n||0)+1}); }
+  return [...m.values()].sort((a,b)=>b.l-a.l||b.b-a.b);
+}
+const cm=v=>v.toFixed(1);
+// Liefert {buf, stuecke, seiten} oder null (kein Holz gefunden, schon eingetragen oder nicht lesbar)
+async function holzlisteEintragen(buf){
+  try{
+    const lib=await pdfjs();
+    const d=await lib.getDocument({data:new Uint8Array(buf.slice(0))}).promise;
+    const proSeite=[]; for(let n=1;n<=d.numPages;n++) proSeite.push(await holzSeite(await d.getPage(n)));
+    d.destroy();
+    const alle=proSeite.flatMap(s=>s.teile);
+    if(!alle.length) return null;
+    const {PDFDocument,StandardFonts,rgb}=await pdfLib();
+    const doc=await PDFDocument.load(buf.slice(0),{updateMetadata:false});
+    if(String(doc.getKeywords()||'').includes(HOLZ_MARKE)) return null;
+    if(doc.getPageCount()!==proSeite.length) return null;
+    const f=await doc.embedFont(StandardFonts.Helvetica), fb=await doc.embedFont(StandardFonts.HelveticaBold);
+    const HOLZ=rgb(196/255,180/255,140/255), ROT=rgb(.8,0,0), GRAU=rgb(.35,.35,.35), SCHWARZ=rgb(0,0,0);
+    // Liste in einen Bereich schreiben (x links, yOben), gibt das untere Ende zurück
+    const liste=(page,x,yOben,breite,gr,titel,teile,offen,unter,totalText)=>{
+      let y=yOben-gr*1.4;
+      page.drawRectangle({x,y:y-gr*.2,width:gr*1.2,height:gr*1.2,color:HOLZ,borderColor:SCHWARZ,borderWidth:.5});
+      page.drawText(titel,{x:x+gr*1.7,y,size:gr*1.15,font:fb,color:SCHWARZ});
+      if(unter){ y-=gr*1.4; page.drawText(unter,{x,y,size:gr*.75,font:f,color:GRAU}); }
+      y-=gr*2; const sp=[x,x+breite*.24,x+breite*.62];
+      page.drawText('Anzahl',{x:sp[0],y,size:gr*.85,font:fb}); page.drawText('Länge cm',{x:sp[1],y,size:gr*.85,font:fb}); page.drawText('Breite cm',{x:sp[2],y,size:gr*.85,font:fb});
+      y-=gr*.5; page.drawLine({start:{x,y},end:{x:x+breite,y},thickness:1,color:SCHWARZ});
+      for(const g of holzGruppen(teile)){ y-=gr*1.45; page.drawText(String(g.n)+' Stk.',{x:sp[0],y,size:gr,font:fb}); page.drawText(cm(g.l),{x:sp[1],y,size:gr,font:f}); page.drawText(cm(g.b),{x:sp[2],y,size:gr,font:f}); }
+      y-=gr*.6; page.drawLine({start:{x,y},end:{x:x+breite,y},thickness:1,color:SCHWARZ});
+      y-=gr*1.4; page.drawText(totalText||`Total ${teile.length} Stk.`,{x:sp[0],y,size:gr,font:fb});
+      if(offen.length){
+        y-=gr*1.8; page.drawText('Bitte im Plan prüfen',{x,y,size:gr*.85,font:fb,color:ROT}); y-=gr*1.15; page.drawText('(Mass ohne Gegenstück):',{x,y,size:gr*.8,font:f,color:ROT});
+        const w=offen.map(v=>typeof v==='number'?cm(v)+' cm':v+' cm'); for(let i=0;i<w.length;i+=3){ y-=gr*1.15; page.drawText(w.slice(i,i+3).join(', '),{x,y,size:gr*.8,font:f,color:ROT}); }
+      }
+      return y;
+    };
+    const pages=doc.getPages();
+    proSeite.forEach((s,i)=>{
+      if(!s.teile.length&&!s.offen.length) return;
+      const p=pages[i]; const mb=p.getMediaBox(); const gr=Math.max(10,Math.min(26,mb.height/70)); const B=gr*17;
+      // Seite rechts um einen Streifen verbreitern: der Plan selbst bleibt unverändert
+      p.setMediaBox(mb.x,mb.y,mb.width+B,mb.height); p.setCropBox(mb.x,mb.y,mb.width+B,mb.height);
+      p.drawRectangle({x:mb.x+mb.width,y:mb.y,width:B,height:mb.height,color:rgb(1,1,1)});
+      p.drawLine({start:{x:mb.x+mb.width+gr*.5,y:mb.y+gr},end:{x:mb.x+mb.width+gr*.5,y:mb.y+mb.height-gr},thickness:1.5,color:HOLZ});
+      liste(p,mb.x+mb.width+gr*1.5,mb.y+mb.height-gr*2,B-gr*2.5,gr,'Holzliste',s.teile,s.offen,'automatisch aus dem Plan gelesen');
+    });
+    // Gesamtliste aller Seiten am Schluss (A4 hoch)
+    if(pages.length>1){
+      const offen=proSeite.flatMap((s,i)=>s.offen.map(v=>`S. ${i+1}: ${cm(v)}`));
+      const gruppen=holzGruppen(alle); const gr=11, proBlatt=40;
+      for(let a=0;a<Math.max(1,gruppen.length);a+=proBlatt){
+        const p=doc.addPage([595,842]); const teil=gruppen.slice(a,a+proBlatt).flatMap(g=>Array(g.n).fill({l:g.l,b:g.b}));
+        const letzte=a+proBlatt>=gruppen.length;
+        liste(p,50,800,495,gr,'Holzliste gesamt'+(a?' (Fortsetzung)':''),teil,letzte?offen.slice(0,12):[],`${pages.length} Seiten, ${alle.length} Hölzer · automatisch aus dem Plan gelesen`,
+          letzte?`Total aller Seiten: ${alle.length} Stk.`:`Zwischentotal ${teil.length} Stk., Fortsetzung nächste Seite`);
+      }
+    }
+    doc.setKeywords([HOLZ_MARKE]);
+    const neu=await doc.save();
+    return {buf:neu.buffer.slice(neu.byteOffset,neu.byteOffset+neu.byteLength),stuecke:alle.length,seiten:proSeite.filter(s=>s.teile.length).length,offen:proSeite.reduce((n,s)=>n+s.offen.length,0)};
+  }catch(err){ console.warn('Holzliste nicht möglich',err); return null; }
 }
 // Vorschlag für eine Datei: {ids:[…], typ?:name, quelle:'name'|'inhalt'|'typ', sicher}
 async function dateiVorschlag(f,els){

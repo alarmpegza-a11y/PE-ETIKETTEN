@@ -4,3 +4,4 @@ node_modules/
 *.secret.json
 service-account*.json
 Sicherung/
+test/mock/tmp-*
