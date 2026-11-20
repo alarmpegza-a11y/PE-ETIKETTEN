@@ -852,19 +852,34 @@ function alleListenerStopp(){
 /* Zugangsschlüssel: Jede Etikette trägt einen zufälligen, nicht erratbaren Schlüssel (#k=…) statt der Nummer.
    zugaenge/{schluessel} = {elementId}. Nur damit liefert der Worker der Baustelle ein Element. Das Büro pflegt beides automatisch. */
 function neuerSchluessel(){ const z='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'; return Array.from(crypto.getRandomValues(new Uint8Array(22)),b=>z[b%62]).join(''); }
-function sichereZugang(e){ if(e&&!e.zugang&&istBuero()) patch('elemente',e.id,{zugang:neuerSchluessel()}); return e; }
 let lisZugaenge=null, zugaengeStand=null;
+// Schlüssel, den dieses Element früher schon hatte (gelöscht und neu importiert), sonst null
+function alterSchluessel(id){
+  if(!zugaengeStand) return null; const vergeben=new Set(S.elemente.map(e=>e.zugang).filter(Boolean));
+  let best=null; for(const [k,z] of zugaengeStand) if(z.id===id&&!vergeben.has(k)&&(!best||z.t>best.t)) best={k,t:z.t};
+  return best&&best.k;
+}
+// Erst wenn die Zugänge geladen sind, sonst würde ein neu importiertes Element einen neuen statt seinen alten Schlüssel bekommen
+function sichereZugang(e){ if(e&&!e.zugang&&istBuero()&&zugaengeStand) patch('elemente',e.id,{zugang:alterSchluessel(e.id)||neuerSchluessel()}); return e; }
 function starteZugaenge(){
   if(lisZugaenge||!istBuero()||REGELN_ALT) return;
-  lisZugaenge=onSnapshot(collection(fs,'zugaenge'),snap=>{ if(snap.metadata.fromCache) return; zugaengeStand=new Map(snap.docs.map(d=>[d.id,d.data().elementId])); zugaengePflegen(); },err=>console.warn('Zugänge nicht ladbar',err));
+  lisZugaenge=onSnapshot(collection(fs,'zugaenge'),snap=>{ if(snap.metadata.fromCache) return; zugaengeStand=new Map(snap.docs.map(d=>[d.id,{id:d.data().elementId,t:Number(d.data().t)||0}])); zugaengePflegen(); },err=>console.warn('Zugänge nicht ladbar',err));
 }
+/* Gedruckte Etiketten bleiben gültig, auch wenn ein Auftrag gelöscht und neu importiert wird:
+   Der Schlüssel eines gelöschten Elements bleibt (innerhalb der Aufbewahrungsfrist) in zugaenge stehen.
+   Kommt dasselbe Element (gleiche Betriebsauftragsnr. → gleiche ID «ba_…») wieder, bekommt es den alten Schlüssel zurück. */
 const zugaengePflegen=debounce(()=>{
   if(!zugaengeStand||!istBuero()||REGELN_ALT||!meta.elemente||meta.elemente.fromCache) return;
-  let n=0;
-  for(const e of S.elemente) if(!e.zugang&&n++<300) patch('elemente',e.id,{zugang:neuerSchluessel()});
+  let n=0; const jetzt=Date.now();
+  for(const e of S.elemente) if(!e.zugang&&n++<300) patch('elemente',e.id,{zugang:alterSchluessel(e.id)||neuerSchluessel()});
   const soll=new Map(S.elemente.filter(e=>e.zugang).map(e=>[e.zugang,e.id]));
-  for(const [k,id] of soll) if(zugaengeStand.get(k)!==id&&n++<600) fire(setDoc(ref('zugaenge',k),{elementId:id}));
-  for(const k of zugaengeStand.keys()) if(!soll.has(k)&&n++<900) fire(deleteDoc(ref('zugaenge',k)));
+  for(const [k,id] of soll){ const z=zugaengeStand.get(k); if((!z||z.id!==id||!z.t)&&n++<600) fire(setDoc(ref('zugaenge',k),{elementId:id,t:z&&z.id===id&&z.t?z.t:jetzt})); }
+  // Löschen nur, wenn der Schlüssel zu einem anderen Element gewechselt hat oder die Aufbewahrungsfrist vorbei ist
+  const frist=(aufbewahrTage()||3650)*864e5;
+  for(const [k,z] of zugaengeStand) if(!soll.has(k)){
+    const ersetzt=S.elemente.some(e=>e.id===z.id&&e.zugang&&e.zugang!==k);
+    if((ersetzt||!z.t||jetzt-z.t>frist)&&n++<900) fire(deleteDoc(ref('zugaenge',k)));
+  }
 },1500);
 function pruefeStart(){
   if(S.gestartet||!Object.values(bereit).every(Boolean)) return;
@@ -2018,7 +2033,10 @@ window.addEventListener('beforeprint',()=>{ if($('#print-area').innerHTML){ tite
 async function drucken(els,einmal=false){
   if(!els.length){ toast('Keine Etiketten ausgewählt'); return; }
   if(!await druckHinweis()) return;
-  els.forEach(sichereZugang); qrCache.clear();
+  if(!zugaengeStand){ starteZugaenge(); toast('Etiketten-Schlüssel werden noch geladen. Bitte in ein paar Sekunden nochmals drucken.'); return; }
+  els.forEach(sichereZugang);
+  if(els.some(e=>!e.zugang)){ toast('Etiketten-Schlüssel fehlen noch. Bitte in ein paar Sekunden nochmals drucken.'); return; }
+  qrCache.clear();
   // Jede Etikette so oft wie bei «Anzahl» eingestellt (Testdruck: einmal)
   const a=$('#print-area'); a.innerHTML=els.map(e=>{ const l=labelHTML(e); return einmal?l:l.repeat(anz(e)); }).join('');
   const imgs=$$('img',a);
