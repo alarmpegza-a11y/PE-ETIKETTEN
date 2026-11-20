@@ -1172,6 +1172,7 @@ function renderObjekt(){
       </dl></div>
       <div class="block-aktionen">
         ${ordAkt?`<button class="btn" data-act="ordnerUmbenennen">Lieferung bearbeiten</button><button class="btn danger" data-act="ordnerLoeschen">Lieferung löschen</button>`:''}
+        <button class="btn primary" data-act="holzlisteAuftrag" title="Alle Hölzer aus den Produktionsplänen als PDF zum Drucken">${ordAkt?'Holzliste Lieferung (PDF)':'Holzliste Auftrag (PDF)'}</button>
         <button class="btn" data-act="objektBearbeiten">Objekt bearbeiten</button>
         <button class="btn danger" data-act="objektLoeschenKnopf">Objekt löschen</button>
       </div>
@@ -1324,7 +1325,7 @@ async function planHochladen(file,art,objektId,buf){
   let holz=null;
   if(art==='produktion'){ holz=await holzlisteEintragen(buf); if(holz){ buf=holz.buf; toast(`Holzliste eingetragen: ${holz.stuecke} Hölzer${holz.offen?`, ${holz.offen} Mass${holz.offen>1?'e':''} bitte prüfen`:''} (${file.name})`); } }
   const r=putFile(`plaene/${objektId}/${id}.pdf`,file.name,'application/pdf',buf);
-  const p={id,objektId,art,name:file.name,fileId:r.id,hash,url:'',size:buf.byteLength,created:Date.now(),fertig:false,...(holz?{holz:{stueck:holz.stuecke,offen:holz.offen}}:{}),...(art==='produktion'?{holzGeprueft:true}:{})};
+  const p={id,objektId,art,name:file.name,fileId:r.id,hash,url:'',size:buf.byteLength,created:Date.now(),fertig:false,...(holz?{holz:holz.kurz}:{}),...(art==='produktion'?{holzGeprueft:true}:{})};
   savePlan(p); r.done.then(()=>patch('plaene',p.id,{fertig:true}),()=>{});
   return {planId:p.id,done:r.done};
 }
@@ -1441,7 +1442,10 @@ function pdfLib(){
 const HOLZ_MARKE='PE-Holzliste';
 async function holzSeite(page){
   const t=await page.getTextContent(); const H=[],V=[];
+  // Bereits eingetragene Holzliste (Streifen rechts bzw. Gesamtseite) nicht nochmals zählen
+  const marke=t.items.find(i=>/^Holzliste( gesamt)?/.test(i.str)); const grenze=marke?marke.transform[4]-4*Math.hypot(marke.transform[2],marke.transform[3]):Infinity;
   for(const i of t.items){
+    if(i.transform[4]>=grenze) continue;
     const s=i.str.replace(/\s+/g,''); if(!/^\d{1,3}\.\d$/.test(s)) continue;
     const a=i.transform; const h=Math.hypot(a[2],a[3]); if(h<9.5||h>12.5) continue;
     const rot=Math.round(Math.atan2(a[1],a[0])*180/Math.PI); const x=a[4],y=a[5],w=i.width;
@@ -1461,12 +1465,17 @@ function holzGruppen(teile){
 }
 const cm=v=>v.toFixed(1);
 // Liefert {buf, stuecke, seiten} oder null (kein Holz gefunden, schon eingetragen oder nicht lesbar)
+async function holzLesen(buf){
+  const lib=await pdfjs();
+  const d=await lib.getDocument({data:new Uint8Array(buf.slice(0))}).promise;
+  try{ const proSeite=[]; for(let n=1;n<=d.numPages;n++) proSeite.push(await holzSeite(await d.getPage(n))); return proSeite; }
+  finally{ d.destroy(); }
+}
+// Kurzfassung für die Datenbank: gruppierte Liste und offene Masse mit Seite
+const holzKurz=proSeite=>{ const alle=proSeite.flatMap(s=>s.teile); return {stueck:alle.length,offen:proSeite.reduce((n,s)=>n+s.offen.length,0),liste:holzGruppen(alle),offenListe:proSeite.flatMap((s,i)=>s.offen.map(v=>({s:i+1,v}))).slice(0,50)}; };
 async function holzlisteEintragen(buf){
   try{
-    const lib=await pdfjs();
-    const d=await lib.getDocument({data:new Uint8Array(buf.slice(0))}).promise;
-    const proSeite=[]; for(let n=1;n<=d.numPages;n++) proSeite.push(await holzSeite(await d.getPage(n)));
-    d.destroy();
+    const proSeite=await holzLesen(buf);
     const alle=proSeite.flatMap(s=>s.teile);
     if(!alle.length) return null;
     const {PDFDocument,StandardFonts,rgb}=await pdfLib();
@@ -1516,8 +1525,68 @@ async function holzlisteEintragen(buf){
     }
     doc.setKeywords([HOLZ_MARKE]);
     const neu=await doc.save();
-    return {buf:neu.buffer.slice(neu.byteOffset,neu.byteOffset+neu.byteLength),stuecke:alle.length,seiten:proSeite.filter(s=>s.teile.length).length,offen:proSeite.reduce((n,s)=>n+s.offen.length,0)};
+    return {buf:neu.buffer.slice(neu.byteOffset,neu.byteOffset+neu.byteLength),stuecke:alle.length,seiten:proSeite.filter(s=>s.teile.length).length,offen:proSeite.reduce((n,s)=>n+s.offen.length,0),kurz:holzKurz(proSeite)};
   }catch(err){ console.warn('Holzliste nicht möglich',err); return null; }
+}
+
+/* Holzliste für den ganzen Auftrag: alle Produktionspläne des Objekts (jede Datei einmal), als PDF zum Drucken */
+async function holzVonPlan(p){
+  if(p.holz&&Array.isArray(p.holz.liste)) return p.holz;
+  const f=await getFile(p.fileId); if(!f||!f.data) throw new Error('Datei nicht ladbar');
+  const kurz=holzKurz(await holzLesen(f.data));
+  if(istBuero()) patch('plaene',p.id,{holz:kurz,holzGeprueft:true});
+  return kurz;
+}
+async function holzlisteAuftrag(){
+  const o=obj(S.aktivObjekt); if(!o) return;
+  const ordAkt=(o.ordner||[]).find(x=>x.id===S.aktivOrdner);
+  const els=ordAkt?elementeImBlick(o):elementeVon(o.id);
+  const plaene=[]; const dateien=new Set();
+  for(const e of els){ const p=plan(e.produktionPlanId); if(!p||!p.fileId||dateien.has(p.fileId)) continue; dateien.add(p.fileId); plaene.push(p); }
+  if(!plaene.length){ await dialog('Holzliste',`<p>${ordAkt?`In der Lieferung «${h(ordAkt.name)}»`:'In diesem Auftrag'} ist noch kein Produktionsplan hochgeladen. Die Holzliste entsteht aus den Produktionsplänen.</p>`,{ok:'OK',info:true}); return; }
+  const quellen=[]; const fehler=[];
+  try{
+    for(let i=0;i<plaene.length;i++){
+      pruefFortschritt('Holzliste: Produktionspläne werden gelesen',i+1,plaene.length);
+      try{ const k=await holzVonPlan(plaene[i]); quellen.push({p:plaene[i],k}); }catch(err){ console.warn(err); fehler.push(plaene[i].name); }
+    }
+  }finally{ pruefFortschritt(null); }
+  const summe=new Map(); let total=0;
+  for(const {k} of quellen) for(const g of k.liste||[]){ const key=g.l+'x'+g.b; const x=summe.get(key)||{l:g.l,b:g.b,n:0}; x.n+=g.n; total+=g.n; summe.set(key,x); }
+  const gruppen=[...summe.values()].sort((a,b)=>b.l-a.l||b.b-a.b);
+  if(!total){ await dialog('Holzliste',`<p>In ${plaene.length} Produktionsplan${plaene.length>1?'en':''} wurden keine Holzmasse gefunden.${fehler.length?` ${fehler.length} Plan/Pläne nicht ladbar.`:''}</p>`,{ok:'OK',info:true}); return; }
+  const {PDFDocument,StandardFonts,rgb}=await pdfLib();
+  const doc=await PDFDocument.create(); const f=await doc.embedFont(StandardFonts.Helvetica), fb=await doc.embedFont(StandardFonts.HelveticaBold);
+  const HOLZ=rgb(196/255,180/255,140/255), GRAU=rgb(.35,.35,.35), ROT=rgb(.8,0,0), LINIE=rgb(.75,.75,.75);
+  const titel=`${o.name}${ordAkt?' · '+ordAkt.name:''}`;
+  let page, y, seite=0;
+  const neueSeite=()=>{ page=doc.addPage([595,842]); seite++; y=800;
+    page.drawRectangle({x:50,y:y-4,width:16,height:16,color:HOLZ,borderColor:rgb(0,0,0),borderWidth:.5});
+    page.drawText(ordAkt?'Holzliste Lieferung':'Holzliste Auftrag',{x:74,y,size:18,font:fb});
+    page.drawText(`Seite ${seite}`,{x:500,y,size:9,font:f,color:GRAU});
+    y-=22; page.drawText(titel.slice(0,90),{x:50,y,size:12,font:fb});
+    y-=15; page.drawText([o.auftragNr?'Auftrag '+o.auftragNr:'',o.kunde||'',`Stand ${fmtDatum(Date.now())}`].filter(Boolean).join(' · ').slice(0,110),{x:50,y,size:9,font:f,color:GRAU});
+    y-=24; };
+  const platz=n=>{ if(y-n<50) neueSeite(); };
+  const kopf=()=>{ platz(40); page.drawText('Anzahl',{x:50,y,size:10,font:fb}); page.drawText('Länge cm',{x:170,y,size:10,font:fb}); page.drawText('Breite cm',{x:290,y,size:10,font:fb}); y-=6; page.drawLine({start:{x:50,y},end:{x:545,y},thickness:1}); y-=16; };
+  neueSeite(); kopf();
+  gruppen.forEach((g,i)=>{ if(y<60){ neueSeite(); kopf(); } if(i%2) page.drawRectangle({x:48,y:y-4,width:499,height:15,color:rgb(.96,.95,.92)});
+    page.drawText(`${g.n} Stk.`,{x:50,y,size:11,font:fb}); page.drawText(cm(g.l),{x:170,y,size:11,font:f}); page.drawText(cm(g.b),{x:290,y,size:11,font:f}); y-=16; });
+  platz(30); page.drawLine({start:{x:50,y:y+10},end:{x:545,y:y+10},thickness:1}); y-=6;
+  page.drawText(`Total ${total} Stk. · ${gruppen.length} verschiedene Masse`,{x:50,y,size:12,font:fb}); y-=30;
+  // Herkunft: welche Produktionspläne
+  platz(40); page.drawText(`Aus ${quellen.length} Produktionsplan${quellen.length>1?'en':''} (jede Datei einmal gezählt):`,{x:50,y,size:10,font:fb}); y-=16;
+  for(const {p,k} of quellen){ platz(16); page.drawText(`${k.stueck} Stk.`,{x:50,y,size:9,font:f}); page.drawText(String(p.name).slice(0,95),{x:110,y,size:9,font:f,color:GRAU}); y-=13; }
+  const offen=quellen.flatMap(({p,k})=>(k.offenListe||[]).map(x=>`${String(p.name).slice(0,40)} S. ${x.s}: ${cm(x.v)} cm`));
+  if(offen.length||fehler.length){ y-=10; platz(30); page.drawText('Bitte prüfen:',{x:50,y,size:10,font:fb,color:ROT}); y-=14;
+    for(const t of [...offen.map(t=>'Mass ohne Gegenstück, '+t),...fehler.map(n=>'Plan nicht lesbar: '+n)]){ platz(14); page.drawText(t.slice(0,110),{x:50,y,size:9,font:f,color:ROT}); y-=12; } }
+  doc.getPages().forEach(pg=>pg.drawLine({start:{x:50,y:40},end:{x:545,y:40},thickness:.5,color:LINIE}));
+  doc.setTitle('Holzliste '+titel); doc.setKeywords([HOLZ_MARKE]);
+  const bytes=await doc.save();
+  const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+  const a=document.createElement('a'); a.href=url; a.download=`Holzliste ${titel}.pdf`.replace(/[\\/:*?"<>|]+/g,' '); document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+  toast(`Holzliste heruntergeladen: ${total} Hölzer aus ${quellen.length} Produktionsplan${quellen.length>1?'en':''}`);
 }
 // Vorschlag für eine Datei: {ids:[…], typ?:name, quelle:'name'|'inhalt'|'typ', sicher}
 async function dateiVorschlag(f,els){
@@ -1904,6 +1973,7 @@ const ACT={
     const o={...d,id:schluessel(d.auftragNr)?objektIdFuer(d.auftragNr):uid(),created:Date.now(),ordner:[l1]};
     saveObj(o); S.aktivObjekt=o.id; S.aktivOrdner=l1.id; S.aktivElement=null; S.auswahl.clear(); renderAll(); toast(`Objekt angelegt mit Lieferung «${l1.name}»`);
   },
+  holzlisteAuftrag(){ holzlisteAuftrag().catch(err=>{ console.error(err); pruefFortschritt(null); toast('Holzliste nicht möglich: '+err.message); }); },
   async objektBearbeiten(){
     const o=obj(S.aktivObjekt); if(!o) return;
     const r=await dialog('Objekt bearbeiten',objektForm(o),{danger:'Objekt löschen'}); if(!r) return;
